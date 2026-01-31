@@ -10,4 +10,5 @@ pub mod layer;
 pub mod mlp;
 pub mod neuron;
 
+pub use layer::Layer;
 pub use neuron::Neuron;
