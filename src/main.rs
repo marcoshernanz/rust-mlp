@@ -18,6 +18,35 @@ impl Neuron {
         }
         sum.tanh()
     }
+
+    /// Backprop for a single sample.
+    ///
+    /// - `output` must be the result previously returned by `forward(inputs)`.
+    /// - `d_output` is the upstream gradient dL/d(output).
+    /// - Writes dL/d(inputs) into `d_inputs` and dL/d(weights) into `d_weights`.
+    /// - Returns dL/d(bias).
+    fn backward(
+        &self,
+        inputs: &[f32],
+        output: f32,
+        d_output: f32,
+        d_inputs: &mut [f32],
+        d_weights: &mut [f32],
+    ) -> f32 {
+        debug_assert_eq!(inputs.len(), self.weights.len());
+        debug_assert_eq!(d_inputs.len(), self.weights.len());
+        debug_assert_eq!(d_weights.len(), self.weights.len());
+
+        // tanh'(z) = 1 - tanh(z)^2 = 1 - output^2
+        let d_z = d_output * (1.0 - output * output);
+
+        for i in 0..self.weights.len() {
+            d_weights[i] = d_z * inputs[i];
+            d_inputs[i] = d_z * self.weights[i];
+        }
+
+        d_z
+    }
 }
 
 fn main() {
