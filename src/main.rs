@@ -16,7 +16,7 @@ impl Neuron {
         for (&w, &x) in self.weights.iter().zip(inputs) {
             sum = w.mul_add(x, sum);
         }
-        sum
+        sum.tanh()
     }
 }
 
