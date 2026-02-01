@@ -23,5 +23,9 @@ fn main() {
         &mut d_biases,
     );
 
-    println!("{y} {out:?}");
+    let mlp = rust_mlp::Mlp::new(&[3, 4, 2]);
+    let mut scratch = mlp.scratch();
+    let y_mlp = mlp.forward(&[0.0, 0.0, 0.0], &mut scratch);
+
+    println!("{y} {out:?} {y_mlp:?}");
 }

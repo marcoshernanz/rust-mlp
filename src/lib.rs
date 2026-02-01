@@ -11,4 +11,5 @@ pub mod mlp;
 pub mod neuron;
 
 pub use layer::Layer;
+pub use mlp::{Mlp, Scratch};
 pub use neuron::Neuron;
