@@ -25,7 +25,11 @@ fn main() {
 
     let mlp = rust_mlp::Mlp::new(&[3, 4, 2]);
     let mut scratch = mlp.scratch();
-    let y_mlp = mlp.forward(&[0.0, 0.0, 0.0], &mut scratch);
+    let input = [0.0_f32; 3];
+    mlp.forward(&input, &mut scratch);
 
-    println!("{y} {out:?} {y_mlp:?}");
+    let mut grads = mlp.gradients();
+    let d_input = mlp.backward(&input, &scratch, &[1.0, 1.0], &mut grads);
+
+    println!("{y} {out:?} {:?} {d_input:?}", scratch.output());
 }
