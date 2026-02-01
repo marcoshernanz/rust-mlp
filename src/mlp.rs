@@ -251,3 +251,159 @@ impl Gradients {
         &self.d_biases[layer_idx]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn loss_for_mlp(mlp: &Mlp, input: &[f32], target: &[f32], scratch: &mut Scratch) -> f32 {
+        mlp.forward(input, scratch);
+        crate::loss::mse(scratch.output(), target)
+    }
+
+    fn assert_close(analytic: f32, numeric: f32, abs_tol: f32, rel_tol: f32) {
+        let diff = (analytic - numeric).abs();
+        let scale = analytic.abs().max(numeric.abs()).max(1.0);
+        assert!(
+            diff <= abs_tol || diff / scale <= rel_tol,
+            "analytic={analytic} numeric={numeric} diff={diff}"
+        );
+    }
+
+    #[test]
+    fn seeded_init_is_deterministic() {
+        let a = Mlp::new_with_seed(&[2, 3, 1], 123);
+        let b = Mlp::new_with_seed(&[2, 3, 1], 123);
+
+        let mut scratch_a = a.scratch();
+        let mut scratch_b = b.scratch();
+        let input = [0.3_f32, -0.7_f32];
+
+        let out_a = a.forward(&input, &mut scratch_a).to_vec();
+        let out_b = b.forward(&input, &mut scratch_b).to_vec();
+        assert_eq!(out_a, out_b);
+    }
+
+    #[test]
+    fn backward_matches_numeric_gradients() {
+        let mut mlp = Mlp::new_with_seed(&[2, 3, 1], 0);
+        let mut scratch = mlp.scratch();
+        let mut grads = mlp.gradients();
+
+        let input = [0.3_f32, -0.7_f32];
+        let target = [0.2_f32];
+
+        mlp.forward(&input, &mut scratch);
+        let mut d_output = vec![0.0_f32; mlp.output_dim()];
+        let _loss = crate::loss::mse_backward(scratch.output(), &target, &mut d_output);
+        let d_input = mlp
+            .backward(&input, &scratch, &d_output, &mut grads)
+            .to_vec();
+
+        let eps = 1e-3_f32;
+        let abs_tol = 1e-3_f32;
+        let rel_tol = 1e-2_f32;
+
+        let mut scratch_tmp = mlp.scratch();
+
+        // Parameters.
+        for layer_idx in 0..mlp.layers.len() {
+            // Weights.
+            let w_len = mlp.layers[layer_idx].in_dim() * mlp.layers[layer_idx].out_dim();
+            debug_assert_eq!(w_len, grads.d_weights(layer_idx).len());
+
+            for p in 0..w_len {
+                let orig = {
+                    let w = mlp.layers[layer_idx].weights_mut();
+                    let orig = w[p];
+                    w[p] = orig + eps;
+                    orig
+                };
+                let loss_plus = loss_for_mlp(&mlp, &input, &target, &mut scratch_tmp);
+
+                {
+                    let w = mlp.layers[layer_idx].weights_mut();
+                    w[p] = orig - eps;
+                }
+                let loss_minus = loss_for_mlp(&mlp, &input, &target, &mut scratch_tmp);
+
+                {
+                    let w = mlp.layers[layer_idx].weights_mut();
+                    w[p] = orig;
+                }
+
+                let numeric = (loss_plus - loss_minus) / (2.0 * eps);
+                let analytic = grads.d_weights(layer_idx)[p];
+                assert_close(analytic, numeric, abs_tol, rel_tol);
+            }
+
+            // Biases.
+            let b_len = mlp.layers[layer_idx].out_dim();
+            debug_assert_eq!(b_len, grads.d_biases(layer_idx).len());
+
+            for p in 0..b_len {
+                let orig = {
+                    let b = mlp.layers[layer_idx].biases_mut();
+                    let orig = b[p];
+                    b[p] = orig + eps;
+                    orig
+                };
+                let loss_plus = loss_for_mlp(&mlp, &input, &target, &mut scratch_tmp);
+
+                {
+                    let b = mlp.layers[layer_idx].biases_mut();
+                    b[p] = orig - eps;
+                }
+                let loss_minus = loss_for_mlp(&mlp, &input, &target, &mut scratch_tmp);
+
+                {
+                    let b = mlp.layers[layer_idx].biases_mut();
+                    b[p] = orig;
+                }
+
+                let numeric = (loss_plus - loss_minus) / (2.0 * eps);
+                let analytic = grads.d_biases(layer_idx)[p];
+                assert_close(analytic, numeric, abs_tol, rel_tol);
+            }
+        }
+
+        // Inputs.
+        let mut input_var = input;
+        for i in 0..input_var.len() {
+            let orig = input_var[i];
+
+            input_var[i] = orig + eps;
+            let loss_plus = loss_for_mlp(&mlp, &input_var, &target, &mut scratch_tmp);
+
+            input_var[i] = orig - eps;
+            let loss_minus = loss_for_mlp(&mlp, &input_var, &target, &mut scratch_tmp);
+
+            input_var[i] = orig;
+
+            let numeric = (loss_plus - loss_minus) / (2.0 * eps);
+            let analytic = d_input[i];
+            assert_close(analytic, numeric, abs_tol, rel_tol);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic]
+    fn forward_panics_on_input_shape_mismatch() {
+        let mlp = Mlp::new_with_seed(&[2, 3, 1], 0);
+        let mut scratch = mlp.scratch();
+        let input = [0.0_f32; 3];
+        mlp.forward(&input, &mut scratch);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic]
+    fn forward_panics_on_scratch_mismatch() {
+        let a = Mlp::new_with_seed(&[2, 3, 1], 0);
+        let b = Mlp::new_with_seed(&[2, 4, 1], 0);
+        let mut scratch_b = b.scratch();
+        let input = [0.0_f32; 2];
+        a.forward(&input, &mut scratch_b);
+    }
+}

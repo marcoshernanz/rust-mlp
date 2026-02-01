@@ -73,6 +73,18 @@ impl Layer {
         self.out_dim
     }
 
+    #[inline]
+    #[cfg(test)]
+    pub(crate) fn weights_mut(&mut self) -> &mut [f32] {
+        &mut self.weights
+    }
+
+    #[inline]
+    #[cfg(test)]
+    pub(crate) fn biases_mut(&mut self) -> &mut [f32] {
+        &mut self.biases
+    }
+
     /// Forward pass for a single sample.
     ///
     /// Computes:
@@ -166,5 +178,137 @@ impl Layer {
         for (b, &db) in self.biases.iter_mut().zip(d_biases) {
             *b -= lr * db;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn loss_for_layer(layer: &Layer, input: &[f32], target: &[f32], out: &mut [f32]) -> f32 {
+        layer.forward(input, out);
+        crate::loss::mse(out, target)
+    }
+
+    fn assert_close(analytic: f32, numeric: f32, abs_tol: f32, rel_tol: f32) {
+        let diff = (analytic - numeric).abs();
+        let scale = analytic.abs().max(numeric.abs()).max(1.0);
+        assert!(
+            diff <= abs_tol || diff / scale <= rel_tol,
+            "analytic={analytic} numeric={numeric} diff={diff}"
+        );
+    }
+
+    #[test]
+    fn seeded_init_is_deterministic() {
+        let a = Layer::new_with_seed(3, 2, Init::XavierTanh, 123);
+        let b = Layer::new_with_seed(3, 2, Init::XavierTanh, 123);
+        assert_eq!(a.weights, b.weights);
+        assert_eq!(a.biases, b.biases);
+    }
+
+    #[test]
+    fn backward_matches_numeric_gradients() {
+        let in_dim = 3;
+        let out_dim = 2;
+        let mut layer = Layer::new_with_seed(in_dim, out_dim, Init::XavierTanh, 0);
+
+        let mut input = vec![0.3_f32, -0.7_f32, 0.1_f32];
+        let target = vec![0.2_f32, -0.1_f32];
+
+        let mut outputs = vec![0.0_f32; out_dim];
+        layer.forward(&input, &mut outputs);
+
+        let mut d_outputs = vec![0.0_f32; out_dim];
+        let _loss = crate::loss::mse_backward(&outputs, &target, &mut d_outputs);
+
+        let mut d_inputs = vec![0.0_f32; in_dim];
+        let mut d_weights = vec![0.0_f32; in_dim * out_dim];
+        let mut d_biases = vec![0.0_f32; out_dim];
+
+        layer.backward(
+            &input,
+            &outputs,
+            &d_outputs,
+            &mut d_inputs,
+            &mut d_weights,
+            &mut d_biases,
+        );
+
+        let eps = 1e-3_f32;
+        let abs_tol = 1e-3_f32;
+        let rel_tol = 1e-2_f32;
+
+        // Weights.
+        let mut out_tmp = vec![0.0_f32; out_dim];
+        for p in 0..layer.weights.len() {
+            let orig = layer.weights[p];
+
+            layer.weights[p] = orig + eps;
+            let loss_plus = loss_for_layer(&layer, &input, &target, &mut out_tmp);
+
+            layer.weights[p] = orig - eps;
+            let loss_minus = loss_for_layer(&layer, &input, &target, &mut out_tmp);
+
+            layer.weights[p] = orig;
+
+            let numeric = (loss_plus - loss_minus) / (2.0 * eps);
+            let analytic = d_weights[p];
+            assert_close(analytic, numeric, abs_tol, rel_tol);
+        }
+
+        // Biases.
+        for p in 0..layer.biases.len() {
+            let orig = layer.biases[p];
+
+            layer.biases[p] = orig + eps;
+            let loss_plus = loss_for_layer(&layer, &input, &target, &mut out_tmp);
+
+            layer.biases[p] = orig - eps;
+            let loss_minus = loss_for_layer(&layer, &input, &target, &mut out_tmp);
+
+            layer.biases[p] = orig;
+
+            let numeric = (loss_plus - loss_minus) / (2.0 * eps);
+            let analytic = d_biases[p];
+            assert_close(analytic, numeric, abs_tol, rel_tol);
+        }
+
+        // Inputs.
+        for i in 0..input.len() {
+            let orig = input[i];
+
+            input[i] = orig + eps;
+            let loss_plus = loss_for_layer(&layer, &input, &target, &mut out_tmp);
+
+            input[i] = orig - eps;
+            let loss_minus = loss_for_layer(&layer, &input, &target, &mut out_tmp);
+
+            input[i] = orig;
+
+            let numeric = (loss_plus - loss_minus) / (2.0 * eps);
+            let analytic = d_inputs[i];
+            assert_close(analytic, numeric, abs_tol, rel_tol);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic]
+    fn forward_panics_on_input_shape_mismatch() {
+        let layer = Layer::new_with_seed(3, 2, Init::XavierTanh, 0);
+        let input = vec![0.0_f32; 2];
+        let mut out = vec![0.0_f32; 2];
+        layer.forward(&input, &mut out);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic]
+    fn forward_panics_on_output_shape_mismatch() {
+        let layer = Layer::new_with_seed(3, 2, Init::XavierTanh, 0);
+        let input = vec![0.0_f32; 3];
+        let mut out = vec![0.0_f32; 1];
+        layer.forward(&input, &mut out);
     }
 }
