@@ -25,3 +25,15 @@ impl Sgd {
         model.sgd_step(grads, self.lr);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sgd_requires_positive_finite_lr() {
+        assert!(std::panic::catch_unwind(|| Sgd::new(0.0)).is_err());
+        assert!(std::panic::catch_unwind(|| Sgd::new(-1.0)).is_err());
+        assert!(std::panic::catch_unwind(|| Sgd::new(f32::NAN)).is_err());
+    }
+}

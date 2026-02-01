@@ -8,7 +8,6 @@ fn main() {
     let mut mlp = rust_mlp::Mlp::new_with_seed(&[2, 1], 0);
     let mut scratch = mlp.scratch();
     let mut grads = mlp.gradients();
-    let mut d_output = vec![0.0_f32; mlp.output_dim()];
 
     let opt = rust_mlp::Sgd::new(0.1);
 
@@ -24,8 +23,8 @@ fn main() {
         mlp.forward(&input, &mut scratch);
 
         let pred = scratch.output();
-        let loss = rust_mlp::loss::mse_backward(pred, &target, &mut d_output);
-        mlp.backward(&input, &scratch, &d_output, &mut grads);
+        let loss = rust_mlp::loss::mse_backward(pred, &target, grads.d_output_mut());
+        mlp.backward_in_place(&input, &scratch, &mut grads);
         opt.step(&mut mlp, &grads);
 
         if step % 500 == 0 {

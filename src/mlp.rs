@@ -115,6 +115,8 @@ impl Mlp {
     ///
     /// You must call `forward` first using the same `input` and `scratch`.
     ///
+    /// This is the explicit/clear entry point: you pass `d_output = dL/d(output)`.
+    ///
     /// Overwrite semantics:
     /// - `grads` is overwritten with gradients for this sample.
     ///
@@ -126,9 +128,42 @@ impl Mlp {
         d_output: &[f32],
         grads: &'a mut Gradients,
     ) -> &'a [f32] {
+        debug_assert_eq!(d_output.len(), self.output_dim());
+
+        if self.layers.is_empty() {
+            grads.d_input.fill(0.0);
+            return &grads.d_input;
+        }
+
+        let last = self.layers.len() - 1;
+        debug_assert_eq!(grads.d_layer_outputs[last].len(), self.output_dim());
+        grads.d_layer_outputs[last].copy_from_slice(d_output);
+
+        self.backward_in_place(input, scratch, grads)
+    }
+
+    /// Backward pass for a single sample, using the internal `d_output` buffer.
+    ///
+    /// You must call `forward` first using the same `input` and `scratch`.
+    ///
+    /// Before calling this, write the upstream gradient `dL/d(output)` into
+    /// `grads.d_output_mut()`.
+    ///
+    /// This variant avoids an extra `d_output` buffer and is convenient for loss
+    /// functions that already write into a caller-provided slice.
+    ///
+    /// Overwrite semantics:
+    /// - `grads` is overwritten with gradients for this sample.
+    ///
+    /// Returns dL/d(input).
+    pub fn backward_in_place<'a>(
+        &self,
+        input: &[f32],
+        scratch: &Scratch,
+        grads: &'a mut Gradients,
+    ) -> &'a [f32] {
         debug_assert_eq!(input.len(), self.input_dim());
         debug_assert_eq!(scratch.layer_outputs.len(), self.layers.len());
-        debug_assert_eq!(d_output.len(), self.output_dim());
 
         debug_assert_eq!(grads.d_weights.len(), self.layers.len());
         debug_assert_eq!(grads.d_biases.len(), self.layers.len());
@@ -142,7 +177,6 @@ impl Mlp {
 
         let last = self.layers.len() - 1;
         debug_assert_eq!(grads.d_layer_outputs[last].len(), self.output_dim());
-        grads.d_layer_outputs[last].copy_from_slice(d_output);
 
         for idx in (0..self.layers.len()).rev() {
             let layer = &self.layers[idx];
@@ -236,6 +270,28 @@ impl Gradients {
         }
     }
 
+    /// Mutable view of the upstream gradient buffer for the final model output.
+    ///
+    /// Typical flow:
+    /// - `mlp.forward(input, &mut scratch)`
+    /// - compute loss and write `dL/d(output)` into `grads.d_output_mut()`
+    /// - `mlp.backward(input, &scratch, &mut grads)`
+    #[inline]
+    pub fn d_output_mut(&mut self) -> &mut [f32] {
+        self.d_layer_outputs
+            .last_mut()
+            .expect("mlp must have at least one layer")
+            .as_mut_slice()
+    }
+
+    #[inline]
+    pub fn d_output(&self) -> &[f32] {
+        self.d_layer_outputs
+            .last()
+            .expect("mlp must have at least one layer")
+            .as_slice()
+    }
+
     #[inline]
     pub fn d_input(&self) -> &[f32] {
         &self.d_input
@@ -294,11 +350,8 @@ mod tests {
         let target = [0.2_f32];
 
         mlp.forward(&input, &mut scratch);
-        let mut d_output = vec![0.0_f32; mlp.output_dim()];
-        let _loss = crate::loss::mse_backward(scratch.output(), &target, &mut d_output);
-        let d_input = mlp
-            .backward(&input, &scratch, &d_output, &mut grads)
-            .to_vec();
+        let _loss = crate::loss::mse_backward(scratch.output(), &target, grads.d_output_mut());
+        let d_input = mlp.backward_in_place(&input, &scratch, &mut grads).to_vec();
 
         let eps = 1e-3_f32;
         let abs_tol = 1e-3_f32;

@@ -29,7 +29,8 @@ fn main() {
     mlp.forward(&input, &mut scratch);
 
     let mut grads = mlp.gradients();
-    let d_input = mlp.backward(&input, &scratch, &[1.0, 1.0], &mut grads);
+    grads.d_output_mut().copy_from_slice(&[1.0, 1.0]);
+    let d_input = mlp.backward_in_place(&input, &scratch, &mut grads);
 
     println!("{y} {out:?} {:?} {d_input:?}", scratch.output());
 }
