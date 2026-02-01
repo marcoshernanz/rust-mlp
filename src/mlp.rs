@@ -1,4 +1,7 @@
-use crate::Layer;
+use crate::{Init, Layer};
+
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 
 #[derive(Debug, Clone)]
 pub struct Mlp {
@@ -34,13 +37,24 @@ impl Mlp {
     ///
     /// Example: `sizes = [in, hidden1, hidden2, out]`.
     pub fn new(sizes: &[usize]) -> Self {
+        let mut rng = rand::thread_rng();
+        Self::new_with_rng(sizes, &mut rng)
+    }
+
+    pub fn new_with_seed(sizes: &[usize], seed: u64) -> Self {
+        let mut rng = StdRng::seed_from_u64(seed);
+        Self::new_with_rng(sizes, &mut rng)
+    }
+
+    pub fn new_with_rng<R: Rng + ?Sized>(sizes: &[usize], rng: &mut R) -> Self {
         assert!(sizes.len() >= 2, "sizes must include input and output dims");
+        assert!(sizes.iter().all(|&d| d > 0), "all layer sizes must be > 0");
 
         let mut layers = Vec::with_capacity(sizes.len() - 1);
         for w in sizes.windows(2) {
             let in_dim = w[0];
             let out_dim = w[1];
-            layers.push(Layer::new(in_dim, out_dim));
+            layers.push(Layer::new_with_rng(in_dim, out_dim, Init::XavierTanh, rng));
         }
         Self { layers }
     }

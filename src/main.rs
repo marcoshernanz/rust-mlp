@@ -3,7 +3,7 @@ fn main() {
     let neuron = rust_mlp::Neuron::new(3);
     let y = neuron.forward(&[0.0, 0.0, 0.0]);
 
-    let layer = rust_mlp::Layer::new(3, 2);
+    let layer = rust_mlp::Layer::new_with_seed(3, 2, rust_mlp::Init::XavierTanh, 0);
     let mut out = [0.0_f32; 2];
     layer.forward(&[0.0, 0.0, 0.0], &mut out);
 
@@ -23,7 +23,7 @@ fn main() {
         &mut d_biases,
     );
 
-    let mlp = rust_mlp::Mlp::new(&[3, 4, 2]);
+    let mlp = rust_mlp::Mlp::new_with_seed(&[3, 4, 2], 0);
     let mut scratch = mlp.scratch();
     let input = [0.0_f32; 3];
     mlp.forward(&input, &mut scratch);

@@ -10,6 +10,6 @@ pub mod layer;
 pub mod mlp;
 pub mod neuron;
 
-pub use layer::Layer;
+pub use layer::{Init, Layer};
 pub use mlp::{Gradients, Mlp, Scratch};
 pub use neuron::Neuron;

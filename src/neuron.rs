@@ -1,3 +1,7 @@
+use rand::distributions::{Distribution, Uniform};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
+
 #[derive(Debug, Clone)]
 pub struct Neuron {
     weights: Vec<f32>,
@@ -11,11 +15,29 @@ impl Neuron {
     /// - `weights.len() == num_inputs`
     /// - `bias` is a scalar parameter
     ///
-    /// Note: initialization is currently all zeros for simplicity.
-    /// For training, you'll typically want a random initializer (e.g. Xavier).
     #[inline]
     pub fn new(num_inputs: usize) -> Self {
-        let weights = vec![0.0; num_inputs];
+        let mut rng = rand::thread_rng();
+        Self::new_with_rng(num_inputs, &mut rng)
+    }
+
+    #[inline]
+    pub fn new_with_seed(num_inputs: usize, seed: u64) -> Self {
+        let mut rng = StdRng::seed_from_u64(seed);
+        Self::new_with_rng(num_inputs, &mut rng)
+    }
+
+    pub fn new_with_rng<R: Rng + ?Sized>(num_inputs: usize, rng: &mut R) -> Self {
+        let fan_in = num_inputs as f32;
+        let fan_out = 1.0_f32;
+        let limit = (6.0 / (fan_in + fan_out)).sqrt();
+        let dist = Uniform::new(-limit, limit);
+
+        let mut weights = vec![0.0; num_inputs];
+        for w in &mut weights {
+            *w = dist.sample(rng);
+        }
+
         Self { weights, bias: 0.0 }
     }
 

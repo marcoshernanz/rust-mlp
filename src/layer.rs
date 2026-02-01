@@ -1,3 +1,14 @@
+use rand::distributions::{Distribution, Uniform};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Init {
+    Zeros,
+    /// Xavier/Glorot uniform init, a good default for `tanh`.
+    XavierTanh,
+}
+
 #[derive(Debug, Clone)]
 pub struct Layer {
     in_dim: usize,
@@ -10,8 +21,40 @@ pub struct Layer {
 impl Layer {
     #[inline]
     pub fn new(in_dim: usize, out_dim: usize) -> Self {
-        let weights = vec![0.0; in_dim * out_dim];
+        let mut rng = rand::thread_rng();
+        Self::new_with_rng(in_dim, out_dim, Init::XavierTanh, &mut rng)
+    }
+
+    #[inline]
+    pub fn new_with_seed(in_dim: usize, out_dim: usize, init: Init, seed: u64) -> Self {
+        let mut rng = StdRng::seed_from_u64(seed);
+        Self::new_with_rng(in_dim, out_dim, init, &mut rng)
+    }
+
+    pub fn new_with_rng<R: Rng + ?Sized>(
+        in_dim: usize,
+        out_dim: usize,
+        init: Init,
+        rng: &mut R,
+    ) -> Self {
+        assert!(in_dim > 0 && out_dim > 0, "layer dims must be > 0");
+
+        let mut weights = vec![0.0; in_dim * out_dim];
+        match init {
+            Init::Zeros => {}
+            Init::XavierTanh => {
+                let fan_in = in_dim as f32;
+                let fan_out = out_dim as f32;
+                let limit = (6.0 / (fan_in + fan_out)).sqrt();
+                let dist = Uniform::new(-limit, limit);
+                for w in &mut weights {
+                    *w = dist.sample(rng);
+                }
+            }
+        }
+
         let biases = vec![0.0; out_dim];
+
         Self {
             in_dim,
             out_dim,
