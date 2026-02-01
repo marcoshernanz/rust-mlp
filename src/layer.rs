@@ -149,4 +149,22 @@ impl Layer {
             }
         }
     }
+
+    /// Applies an SGD update: `param -= lr * d_param`.
+    ///
+    /// Shape contract:
+    /// - `d_weights.len() == self.weights.len()`
+    /// - `d_biases.len() == self.biases.len()`
+    #[inline]
+    pub fn sgd_step(&mut self, d_weights: &[f32], d_biases: &[f32], lr: f32) {
+        debug_assert_eq!(d_weights.len(), self.weights.len());
+        debug_assert_eq!(d_biases.len(), self.biases.len());
+
+        for (w, &dw) in self.weights.iter_mut().zip(d_weights) {
+            *w -= lr * dw;
+        }
+        for (b, &db) in self.biases.iter_mut().zip(d_biases) {
+            *b -= lr * db;
+        }
+    }
 }

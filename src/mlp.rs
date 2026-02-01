@@ -186,6 +186,17 @@ impl Mlp {
 
         &grads.d_input
     }
+
+    /// Applies an SGD update to all layers.
+    #[inline]
+    pub fn sgd_step(&mut self, grads: &Gradients, lr: f32) {
+        debug_assert_eq!(self.layers.len(), grads.d_weights.len());
+        debug_assert_eq!(self.layers.len(), grads.d_biases.len());
+
+        for i in 0..self.layers.len() {
+            self.layers[i].sgd_step(&grads.d_weights[i], &grads.d_biases[i], lr);
+        }
+    }
 }
 
 impl Scratch {

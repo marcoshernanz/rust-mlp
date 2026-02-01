@@ -7,9 +7,12 @@
 //! - Shape checks use `debug_assert_eq!` (checked in debug builds).
 
 pub mod layer;
+pub mod loss;
 pub mod mlp;
 pub mod neuron;
+pub mod optim;
 
 pub use layer::{Init, Layer};
 pub use mlp::{Gradients, Mlp, Scratch};
 pub use neuron::Neuron;
+pub use optim::Sgd;
