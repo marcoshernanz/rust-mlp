@@ -2,6 +2,8 @@ use rand::distributions::{Distribution, Uniform};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
+use crate::{Error, Result};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Init {
     Zeros,
@@ -25,10 +27,20 @@ impl Layer {
         Self::new_with_rng(in_dim, out_dim, Init::XavierTanh, &mut rng)
     }
 
+    pub fn try_new(in_dim: usize, out_dim: usize) -> Result<Self> {
+        let mut rng = rand::thread_rng();
+        Self::try_new_with_rng(in_dim, out_dim, Init::XavierTanh, &mut rng)
+    }
+
     #[inline]
     pub fn new_with_seed(in_dim: usize, out_dim: usize, init: Init, seed: u64) -> Self {
         let mut rng = StdRng::seed_from_u64(seed);
         Self::new_with_rng(in_dim, out_dim, init, &mut rng)
+    }
+
+    pub fn try_new_with_seed(in_dim: usize, out_dim: usize, init: Init, seed: u64) -> Result<Self> {
+        let mut rng = StdRng::seed_from_u64(seed);
+        Self::try_new_with_rng(in_dim, out_dim, init, &mut rng)
     }
 
     pub fn new_with_rng<R: Rng + ?Sized>(
@@ -61,6 +73,19 @@ impl Layer {
             weights,
             biases,
         }
+    }
+
+    pub fn try_new_with_rng<R: Rng + ?Sized>(
+        in_dim: usize,
+        out_dim: usize,
+        init: Init,
+        rng: &mut R,
+    ) -> Result<Self> {
+        if in_dim == 0 || out_dim == 0 {
+            return Err(Error::InvalidConfig("layer dims must be > 0".to_owned()));
+        }
+
+        Ok(Self::new_with_rng(in_dim, out_dim, init, rng))
     }
 
     #[inline]
@@ -99,13 +124,13 @@ impl Layer {
         debug_assert_eq!(inputs.len(), self.in_dim);
         debug_assert_eq!(outputs.len(), self.out_dim);
 
-        for o in 0..self.out_dim {
+        for (o, out) in outputs.iter_mut().enumerate() {
             let mut sum = self.biases[o];
             let row = o * self.in_dim;
-            for i in 0..self.in_dim {
-                sum = self.weights[row + i].mul_add(inputs[i], sum);
+            for (i, &x) in inputs.iter().enumerate() {
+                sum = self.weights[row + i].mul_add(x, sum);
             }
-            outputs[o] = sum.tanh();
+            *out = sum.tanh();
         }
     }
 
@@ -241,7 +266,7 @@ mod tests {
 
         // Weights.
         let mut out_tmp = vec![0.0_f32; out_dim];
-        for p in 0..layer.weights.len() {
+        for (p, &analytic) in d_weights.iter().enumerate() {
             let orig = layer.weights[p];
 
             layer.weights[p] = orig + eps;
@@ -253,12 +278,11 @@ mod tests {
             layer.weights[p] = orig;
 
             let numeric = (loss_plus - loss_minus) / (2.0 * eps);
-            let analytic = d_weights[p];
             assert_close(analytic, numeric, abs_tol, rel_tol);
         }
 
         // Biases.
-        for p in 0..layer.biases.len() {
+        for (p, &analytic) in d_biases.iter().enumerate() {
             let orig = layer.biases[p];
 
             layer.biases[p] = orig + eps;
@@ -270,7 +294,6 @@ mod tests {
             layer.biases[p] = orig;
 
             let numeric = (loss_plus - loss_minus) / (2.0 * eps);
-            let analytic = d_biases[p];
             assert_close(analytic, numeric, abs_tol, rel_tol);
         }
 

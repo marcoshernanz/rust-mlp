@@ -1,11 +1,11 @@
-/// Loss functions.
-///
-/// These are small, allocation-free helpers intended to be used like:
-///
-/// - run `model.forward(...)`
-/// - compute `d_output` via a loss (e.g. `mse_backward`)
-/// - run `model.backward(...)`
-/// - update parameters with an optimizer
+//! Loss functions.
+//!
+//! These are small, allocation-free helpers intended to be used like:
+//!
+//! - run `model.forward(...)`
+//! - compute `d_output` via a loss (e.g. `mse_backward`)
+//! - run `model.backward(...)`
+//! - update parameters with an optimizer
 
 /// Mean squared error (MSE) loss.
 ///

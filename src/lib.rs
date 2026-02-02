@@ -1,17 +1,20 @@
-//! A small MLP library built for learning.
+//! A small MLP (multi-layer perceptron) crate.
 //!
-//! Conventions used across the crate:
+//! This crate is built to be easy to understand while keeping the hot path allocation-free.
+//!
+//! Conventions:
 //! - Scalars are `f32`.
-//! - Inputs/outputs are passed as slices (`&[f32]`, `&mut [f32]`) to avoid
-//!   allocations in hot paths.
-//! - Shape checks use `debug_assert_eq!` (checked in debug builds).
+//! - Inputs/outputs are passed as slices (`&[f32]`, `&mut [f32]`) to avoid allocations.
+//! - Low-level APIs (`forward`, `backward`) use `debug_assert` shape checks.
+//! - High-level APIs (`fit`, `predict`, `evaluate_*`) validate shapes and return `Result`.
+//!
+//! See `ROADMAP.md` for the production-readiness plan.
 
 pub mod data;
 pub mod error;
 pub mod layer;
 pub mod loss;
 pub mod mlp;
-pub mod neuron;
 pub mod optim;
 pub mod train;
 
@@ -20,6 +23,5 @@ pub use error::{Error, Result};
 pub use layer::{Init, Layer};
 pub use mlp::Trainer;
 pub use mlp::{Gradients, Mlp, Scratch};
-pub use neuron::Neuron;
 pub use optim::Sgd;
 pub use train::{FitConfig, FitReport};

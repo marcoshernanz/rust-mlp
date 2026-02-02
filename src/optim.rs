@@ -1,3 +1,4 @@
+use crate::{Error, Result};
 use crate::{Gradients, Mlp};
 
 #[derive(Debug, Clone, Copy)]
@@ -15,6 +16,15 @@ impl Sgd {
         Self { lr }
     }
 
+    pub fn try_new(lr: f32) -> Result<Self> {
+        if !(lr.is_finite() && lr > 0.0) {
+            return Err(Error::InvalidConfig(
+                "learning rate must be finite and > 0".to_owned(),
+            ));
+        }
+        Ok(Self { lr })
+    }
+
     #[inline]
     pub fn lr(&self) -> f32 {
         self.lr
@@ -23,6 +33,10 @@ impl Sgd {
     #[inline]
     pub fn step(&self, model: &mut Mlp, grads: &Gradients) {
         model.sgd_step(grads, self.lr);
+    }
+
+    pub fn try_step(&self, model: &mut Mlp, grads: &Gradients) -> Result<()> {
+        model.try_sgd_step(grads, self.lr)
     }
 }
 

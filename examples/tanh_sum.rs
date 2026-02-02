@@ -12,7 +12,7 @@ fn main() {
 
     // Build train set.
     let mut train_x = Vec::with_capacity(2 * 256);
-    let mut train_y = Vec::with_capacity(1 * 256);
+    let mut train_y = Vec::with_capacity(256);
     for _ in 0..256 {
         let x0 = dist.sample(&mut rng);
         let x1 = dist.sample(&mut rng);
@@ -22,7 +22,7 @@ fn main() {
 
     // Build test set.
     let mut test_x = Vec::with_capacity(2 * 64);
-    let mut test_y = Vec::with_capacity(1 * 64);
+    let mut test_y = Vec::with_capacity(64);
     for _ in 0..64 {
         let x0 = dist.sample(&mut rng);
         let x1 = dist.sample(&mut rng);

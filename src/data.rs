@@ -17,7 +17,7 @@ impl Inputs {
         if input_dim == 0 {
             return Err(Error::InvalidData("input_dim must be > 0".to_owned()));
         }
-        if inputs.len() % input_dim != 0 {
+        if !inputs.len().is_multiple_of(input_dim) {
             return Err(Error::InvalidData(format!(
                 "inputs length {} is not divisible by input_dim {}",
                 inputs.len(),

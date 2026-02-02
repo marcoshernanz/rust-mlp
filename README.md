@@ -43,4 +43,4 @@ cargo bench
 
 ## Roadmap
 
-See `PLAN.md`.
+See `ROADMAP.md` for the production-readiness plan and `PLAN.md` for the learning checklist.
