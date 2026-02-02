@@ -6,13 +6,20 @@
 //!   allocations in hot paths.
 //! - Shape checks use `debug_assert_eq!` (checked in debug builds).
 
+pub mod data;
+pub mod error;
 pub mod layer;
 pub mod loss;
 pub mod mlp;
 pub mod neuron;
 pub mod optim;
+pub mod train;
 
+pub use data::{Dataset, Inputs};
+pub use error::{Error, Result};
 pub use layer::{Init, Layer};
+pub use mlp::Trainer;
 pub use mlp::{Gradients, Mlp, Scratch};
 pub use neuron::Neuron;
 pub use optim::Sgd;
+pub use train::{FitConfig, FitReport};

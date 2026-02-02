@@ -15,6 +15,13 @@ Run the example training loop:
 cargo run --example tanh_sum
 ```
 
+This uses the high-level API:
+- build `Dataset`
+- `mlp.fit(...)`
+- `mlp.evaluate_mse(...)`
+
+If you only have inputs (no targets), build `Inputs` and call `mlp.predict_inputs(...)`.
+
 Run tests (includes gradient checks):
 
 ```bash

@@ -82,6 +82,12 @@ impl Mlp {
         Gradients::new(self)
     }
 
+    /// Convenience constructor: allocate all training buffers.
+    #[inline]
+    pub fn trainer(&self) -> Trainer {
+        Trainer::new(self)
+    }
+
     /// Forward pass for a single sample.
     ///
     /// Writes intermediate activations into `scratch` and returns the final output slice.
@@ -111,37 +117,6 @@ impl Mlp {
         scratch.output()
     }
 
-    /// Backward pass for a single sample.
-    ///
-    /// You must call `forward` first using the same `input` and `scratch`.
-    ///
-    /// This is the explicit/clear entry point: you pass `d_output = dL/d(output)`.
-    ///
-    /// Overwrite semantics:
-    /// - `grads` is overwritten with gradients for this sample.
-    ///
-    /// Returns dL/d(input).
-    pub fn backward<'a>(
-        &self,
-        input: &[f32],
-        scratch: &Scratch,
-        d_output: &[f32],
-        grads: &'a mut Gradients,
-    ) -> &'a [f32] {
-        debug_assert_eq!(d_output.len(), self.output_dim());
-
-        if self.layers.is_empty() {
-            grads.d_input.fill(0.0);
-            return &grads.d_input;
-        }
-
-        let last = self.layers.len() - 1;
-        debug_assert_eq!(grads.d_layer_outputs[last].len(), self.output_dim());
-        grads.d_layer_outputs[last].copy_from_slice(d_output);
-
-        self.backward_in_place(input, scratch, grads)
-    }
-
     /// Backward pass for a single sample, using the internal `d_output` buffer.
     ///
     /// You must call `forward` first using the same `input` and `scratch`.
@@ -149,14 +124,11 @@ impl Mlp {
     /// Before calling this, write the upstream gradient `dL/d(output)` into
     /// `grads.d_output_mut()`.
     ///
-    /// This variant avoids an extra `d_output` buffer and is convenient for loss
-    /// functions that already write into a caller-provided slice.
-    ///
     /// Overwrite semantics:
     /// - `grads` is overwritten with gradients for this sample.
     ///
     /// Returns dL/d(input).
-    pub fn backward_in_place<'a>(
+    pub fn backward<'a>(
         &self,
         input: &[f32],
         scratch: &Scratch,
@@ -233,6 +205,24 @@ impl Mlp {
     }
 }
 
+/// Reusable buffers for training a specific `Mlp`.
+///
+/// This is the ergonomic wrapper around `Scratch` + `Gradients`.
+#[derive(Debug, Clone)]
+pub struct Trainer {
+    pub scratch: Scratch,
+    pub grads: Gradients,
+}
+
+impl Trainer {
+    pub fn new(mlp: &Mlp) -> Self {
+        Self {
+            scratch: Scratch::new(mlp),
+            grads: Gradients::new(mlp),
+        }
+    }
+}
+
 impl Scratch {
     pub fn new(mlp: &Mlp) -> Self {
         let mut layer_outputs = Vec::with_capacity(mlp.layers.len());
@@ -272,9 +262,9 @@ impl Gradients {
 
     /// Mutable view of the upstream gradient buffer for the final model output.
     ///
-    /// Typical flow:
+    /// Typical training flow:
     /// - `mlp.forward(input, &mut scratch)`
-    /// - compute loss and write `dL/d(output)` into `grads.d_output_mut()`
+    /// - loss writes `dL/d(output)` into `grads.d_output_mut()`
     /// - `mlp.backward(input, &scratch, &mut grads)`
     #[inline]
     pub fn d_output_mut(&mut self) -> &mut [f32] {
@@ -351,7 +341,7 @@ mod tests {
 
         mlp.forward(&input, &mut scratch);
         let _loss = crate::loss::mse_backward(scratch.output(), &target, grads.d_output_mut());
-        let d_input = mlp.backward_in_place(&input, &scratch, &mut grads).to_vec();
+        let d_input = mlp.backward(&input, &scratch, &mut grads).to_vec();
 
         let eps = 1e-3_f32;
         let abs_tol = 1e-3_f32;

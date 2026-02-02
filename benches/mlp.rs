@@ -27,7 +27,7 @@ fn mlp_backward_bench(c: &mut Criterion) {
 
     c.bench_function("mlp_backward_128_256_256_10", |b| {
         b.iter(|| {
-            let d_input = mlp.backward_in_place(black_box(&input), black_box(&scratch), &mut grads);
+            let d_input = mlp.backward(black_box(&input), black_box(&scratch), &mut grads);
             black_box(d_input);
         })
     });
