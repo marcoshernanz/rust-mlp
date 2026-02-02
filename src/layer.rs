@@ -1,3 +1,10 @@
+//! Dense layer implementation.
+//!
+//! This module provides a single dense layer with `tanh` activation and the associated
+//! backward/SGD update routines.
+//!
+//! Shape mismatches are treated as programmer error and will panic via `assert!`.
+
 use rand::distributions::{Distribution, Uniform};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -5,6 +12,7 @@ use rand::{Rng, SeedableRng};
 use crate::{Error, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Initialization scheme for layer weights.
 pub enum Init {
     Zeros,
     /// Xavier/Glorot uniform init, a good default for `tanh`.
@@ -12,6 +20,9 @@ pub enum Init {
 }
 
 #[derive(Debug, Clone)]
+/// A dense layer: `y = tanh(Wx + b)`.
+///
+/// Weights use row-major layout with shape `(out_dim, in_dim)`.
 pub struct Layer {
     in_dim: usize,
     out_dim: usize,
@@ -22,6 +33,7 @@ pub struct Layer {
 
 impl Layer {
     #[inline]
+    /// Construct a layer using a deterministic seed.
     pub fn new_with_seed(in_dim: usize, out_dim: usize, init: Init, seed: u64) -> Result<Self> {
         let mut rng = StdRng::seed_from_u64(seed);
         Self::new_with_rng(in_dim, out_dim, init, &mut rng)
@@ -62,11 +74,13 @@ impl Layer {
     }
 
     #[inline]
+    /// Returns the input dimension.
     pub fn in_dim(&self) -> usize {
         self.in_dim
     }
 
     #[inline]
+    /// Returns the output dimension.
     pub fn out_dim(&self) -> usize {
         self.out_dim
     }
@@ -94,8 +108,20 @@ impl Layer {
     /// - `outputs.len() == self.out_dim`
     #[inline]
     pub fn forward(&self, inputs: &[f32], outputs: &mut [f32]) {
-        debug_assert_eq!(inputs.len(), self.in_dim);
-        debug_assert_eq!(outputs.len(), self.out_dim);
+        assert_eq!(
+            inputs.len(),
+            self.in_dim,
+            "inputs len {} does not match layer in_dim {}",
+            inputs.len(),
+            self.in_dim
+        );
+        assert_eq!(
+            outputs.len(),
+            self.out_dim,
+            "outputs len {} does not match layer out_dim {}",
+            outputs.len(),
+            self.out_dim
+        );
 
         for (o, out) in outputs.iter_mut().enumerate() {
             let mut sum = self.biases[o];
@@ -136,12 +162,48 @@ impl Layer {
         d_weights: &mut [f32],
         d_biases: &mut [f32],
     ) {
-        debug_assert_eq!(inputs.len(), self.in_dim);
-        debug_assert_eq!(outputs.len(), self.out_dim);
-        debug_assert_eq!(d_outputs.len(), self.out_dim);
-        debug_assert_eq!(d_inputs.len(), self.in_dim);
-        debug_assert_eq!(d_weights.len(), self.weights.len());
-        debug_assert_eq!(d_biases.len(), self.out_dim);
+        assert_eq!(
+            inputs.len(),
+            self.in_dim,
+            "inputs len {} does not match layer in_dim {}",
+            inputs.len(),
+            self.in_dim
+        );
+        assert_eq!(
+            outputs.len(),
+            self.out_dim,
+            "outputs len {} does not match layer out_dim {}",
+            outputs.len(),
+            self.out_dim
+        );
+        assert_eq!(
+            d_outputs.len(),
+            self.out_dim,
+            "d_outputs len {} does not match layer out_dim {}",
+            d_outputs.len(),
+            self.out_dim
+        );
+        assert_eq!(
+            d_inputs.len(),
+            self.in_dim,
+            "d_inputs len {} does not match layer in_dim {}",
+            d_inputs.len(),
+            self.in_dim
+        );
+        assert_eq!(
+            d_weights.len(),
+            self.weights.len(),
+            "d_weights len {} does not match weights len {}",
+            d_weights.len(),
+            self.weights.len()
+        );
+        assert_eq!(
+            d_biases.len(),
+            self.out_dim,
+            "d_biases len {} does not match layer out_dim {}",
+            d_biases.len(),
+            self.out_dim
+        );
 
         // d_inputs accumulates contributions from all outputs.
         d_inputs.fill(0.0);
@@ -167,8 +229,20 @@ impl Layer {
     /// - `d_biases.len() == self.biases.len()`
     #[inline]
     pub fn sgd_step(&mut self, d_weights: &[f32], d_biases: &[f32], lr: f32) {
-        debug_assert_eq!(d_weights.len(), self.weights.len());
-        debug_assert_eq!(d_biases.len(), self.biases.len());
+        assert_eq!(
+            d_weights.len(),
+            self.weights.len(),
+            "d_weights len {} does not match weights len {}",
+            d_weights.len(),
+            self.weights.len()
+        );
+        assert_eq!(
+            d_biases.len(),
+            self.biases.len(),
+            "d_biases len {} does not match biases len {}",
+            d_biases.len(),
+            self.biases.len()
+        );
 
         for (w, &dw) in self.weights.iter_mut().zip(d_weights) {
             *w -= lr * dw;
@@ -288,7 +362,6 @@ mod tests {
         }
     }
 
-    #[cfg(debug_assertions)]
     #[test]
     #[should_panic]
     fn forward_panics_on_input_shape_mismatch() {
@@ -298,7 +371,6 @@ mod tests {
         layer.forward(&input, &mut out);
     }
 
-    #[cfg(debug_assertions)]
     #[test]
     #[should_panic]
     fn forward_panics_on_output_shape_mismatch() {

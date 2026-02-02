@@ -1,3 +1,8 @@
+//! Contiguous dataset helpers.
+//!
+//! The training loop operates on slices to avoid per-step allocations. `Inputs` and
+//! `Dataset` provide validated, row-major storage for feature/target matrices.
+
 use crate::{Error, Result};
 
 /// A collection of input samples (X).
@@ -70,21 +75,27 @@ impl Inputs {
     }
 
     #[inline]
+    /// Returns the number of samples.
     pub fn len(&self) -> usize {
         self.len
     }
 
     #[inline]
+    /// Returns true if there are no samples.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     #[inline]
+    /// Returns the per-sample input dimension.
     pub fn input_dim(&self) -> usize {
         self.input_dim
     }
 
     #[inline]
+    /// Returns the `idx`-th input row (shape: `(input_dim,)`).
+    ///
+    /// Panics if `idx >= len`.
     pub fn input(&self, idx: usize) -> &[f32] {
         let start = idx * self.input_dim;
         &self.inputs[start..start + self.input_dim]
@@ -174,36 +185,47 @@ impl Dataset {
     }
 
     #[inline]
+    /// Returns the number of samples.
     pub fn len(&self) -> usize {
         self.inputs.len()
     }
 
     #[inline]
+    /// Returns true if there are no samples.
     pub fn is_empty(&self) -> bool {
         self.inputs.is_empty()
     }
 
     #[inline]
+    /// Returns the per-sample input dimension.
     pub fn input_dim(&self) -> usize {
         self.inputs.input_dim()
     }
 
     #[inline]
+    /// Returns the per-sample target dimension.
     pub fn target_dim(&self) -> usize {
         self.target_dim
     }
 
     #[inline]
+    /// Returns a view of the inputs (X).
     pub fn inputs(&self) -> &Inputs {
         &self.inputs
     }
 
     #[inline]
+    /// Returns the `idx`-th input row (shape: `(input_dim,)`).
+    ///
+    /// Panics if `idx >= len`.
     pub fn input(&self, idx: usize) -> &[f32] {
         self.inputs.input(idx)
     }
 
     #[inline]
+    /// Returns the `idx`-th target row (shape: `(target_dim,)`).
+    ///
+    /// Panics if `idx >= len`.
     pub fn target(&self, idx: usize) -> &[f32] {
         let start = idx * self.target_dim;
         &self.targets[start..start + self.target_dim]

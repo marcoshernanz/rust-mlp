@@ -1,3 +1,11 @@
+//! Multi-layer perceptron (MLP) core.
+//!
+//! The low-level API is intentionally allocation-free:
+//! - `Mlp::forward` writes activations into a reusable `Scratch` and returns a slice.
+//! - `Mlp::backward` writes gradients into a reusable `Gradients`.
+//!
+//! Shape mismatches are treated as programmer error and will panic via `assert!`.
+
 use crate::{Error, Result};
 use crate::{Init, Layer};
 
@@ -5,6 +13,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 #[derive(Debug, Clone)]
+/// A feed-forward multi-layer perceptron composed of dense layers.
 pub struct Mlp {
     layers: Vec<Layer>,
 }
@@ -13,6 +22,7 @@ pub struct Mlp {
 ///
 /// The output of the most recent forward pass lives inside `Scratch`.
 #[derive(Debug, Clone)]
+/// Reusable activations buffer for `Mlp::forward`.
 pub struct Scratch {
     layer_outputs: Vec<Vec<f32>>,
 }
@@ -21,6 +31,7 @@ pub struct Scratch {
 ///
 /// Allocate once via `Mlp::gradients()` and reuse across training steps.
 #[derive(Debug, Clone)]
+/// Reusable gradient buffers for `Mlp::backward`.
 pub struct Gradients {
     d_weights: Vec<Vec<f32>>,
     d_biases: Vec<Vec<f32>>,
@@ -34,11 +45,17 @@ pub struct Gradients {
 }
 
 impl Mlp {
+    /// Construct an MLP with deterministic initialization.
+    ///
+    /// `sizes` is a list of layer sizes including input and output.
     pub fn new_with_seed(sizes: &[usize], seed: u64) -> Result<Self> {
         let mut rng = StdRng::seed_from_u64(seed);
         Self::new_with_rng(sizes, &mut rng)
     }
 
+    /// Construct an MLP using the provided RNG.
+    ///
+    /// `sizes` is a list of layer sizes including input and output.
     pub fn new_with_rng<R: Rng + ?Sized>(sizes: &[usize], rng: &mut R) -> Result<Self> {
         if sizes.len() < 2 {
             return Err(Error::InvalidConfig(
@@ -61,6 +78,7 @@ impl Mlp {
     }
 
     #[inline]
+    /// Returns the expected input dimension.
     pub fn input_dim(&self) -> usize {
         self.layers
             .first()
@@ -69,6 +87,7 @@ impl Mlp {
     }
 
     #[inline]
+    /// Returns the produced output dimension.
     pub fn output_dim(&self) -> usize {
         self.layers
             .last()
@@ -77,14 +96,17 @@ impl Mlp {
     }
 
     #[inline]
+    /// Returns the number of layers.
     pub fn num_layers(&self) -> usize {
         self.layers.len()
     }
 
+    /// Allocate a `Scratch` buffer suitable for this model.
     pub fn scratch(&self) -> Scratch {
         Scratch::new(self)
     }
 
+    /// Allocate a `Gradients` buffer suitable for this model.
     pub fn gradients(&self) -> Gradients {
         Gradients::new(self)
     }
@@ -305,6 +327,7 @@ pub struct Trainer {
 }
 
 impl Trainer {
+    /// Allocate a `Trainer` (scratch + gradients) for `mlp`.
     pub fn new(mlp: &Mlp) -> Self {
         Self {
             scratch: Scratch::new(mlp),
@@ -314,6 +337,7 @@ impl Trainer {
 }
 
 impl Scratch {
+    /// Allocate a scratch buffer suitable for `mlp`.
     pub fn new(mlp: &Mlp) -> Self {
         let mut layer_outputs = Vec::with_capacity(mlp.layers.len());
         for layer in &mlp.layers {
@@ -323,6 +347,7 @@ impl Scratch {
     }
 
     #[inline]
+    /// Returns the final model output slice from the last `forward` call.
     pub fn output(&self) -> &[f32] {
         self.layer_outputs
             .last()
@@ -332,6 +357,7 @@ impl Scratch {
 }
 
 impl Gradients {
+    /// Allocate gradient buffers suitable for `mlp`.
     pub fn new(mlp: &Mlp) -> Self {
         let mut d_weights = Vec::with_capacity(mlp.layers.len());
         let mut d_biases = Vec::with_capacity(mlp.layers.len());
@@ -368,6 +394,7 @@ impl Gradients {
     }
 
     #[inline]
+    /// Immutable view of the final upstream gradient buffer.
     pub fn d_output(&self) -> &[f32] {
         self.d_layer_outputs
             .last()
@@ -376,16 +403,19 @@ impl Gradients {
     }
 
     #[inline]
+    /// Returns dL/d(input) computed by the most recent `backward` call.
     pub fn d_input(&self) -> &[f32] {
         &self.d_input
     }
 
     #[inline]
+    /// Returns the weight gradient for the given layer (row-major `(out_dim, in_dim)`).
     pub fn d_weights(&self, layer_idx: usize) -> &[f32] {
         &self.d_weights[layer_idx]
     }
 
     #[inline]
+    /// Returns the bias gradient for the given layer (length `out_dim`).
     pub fn d_biases(&self, layer_idx: usize) -> &[f32] {
         &self.d_biases[layer_idx]
     }
@@ -522,7 +552,6 @@ mod tests {
         }
     }
 
-    #[cfg(debug_assertions)]
     #[test]
     #[should_panic]
     fn forward_panics_on_input_shape_mismatch() {
@@ -532,7 +561,6 @@ mod tests {
         mlp.forward(&input, &mut scratch);
     }
 
-    #[cfg(debug_assertions)]
     #[test]
     #[should_panic]
     fn forward_panics_on_scratch_mismatch() {

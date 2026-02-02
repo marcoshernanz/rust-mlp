@@ -1,6 +1,12 @@
+//! High-level training and evaluation APIs.
+//!
+//! These methods validate dataset shapes and return `Result`, while internally using
+//! allocation-free per-sample forward/backward passes.
+
 use crate::{Dataset, Error, Mlp, Result, Sgd, Trainer, loss};
 
 #[derive(Debug, Clone, Copy)]
+/// Configuration for `Mlp::fit`.
 pub struct FitConfig {
     pub epochs: usize,
     pub lr: f32,
@@ -16,7 +22,9 @@ impl Default for FitConfig {
 }
 
 #[derive(Debug, Clone)]
+/// Output of a training run.
 pub struct FitReport {
+    /// Mean loss of the final epoch.
     pub final_loss: f32,
 }
 

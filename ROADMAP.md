@@ -42,8 +42,9 @@ These decisions reduce churn and clarify API boundaries.
    - Note: keep the per-sample path (useful for teaching and tiny data).
 
 5. Error handling policy
-   - Decision: no panics from public APIs for shape/config/data problems; return `Result`.
-   - Exception: `debug_assert!` permitted in hot paths for internal invariants.
+   - Decision: constructors and high-level APIs validate and return `Result`.
+   - Decision: low-level hot paths (per-sample forward/backward/step) panic on misuse
+     (shape mismatches) via `assert!` / `assert_eq!`.
 
 6. Determinism
    - Decision: provide deterministic init and deterministic training order when requested.
@@ -58,8 +59,8 @@ Each milestone should be deliverable, tested, and documented.
 Goal: make the current API safe and predictable without changing the learning-oriented structure.
 
 - Public API audit
-  - Ensure all public entry points validate shapes and return `Error` instead of panicking.
-  - Ensure error messages include which dimension was wrong and expected/actual sizes.
+  - Keep constructors and high-level APIs validating and returning `Error`.
+  - Keep low-level per-sample APIs panicking on misuse with clear `assert!` messages.
 
 - Numeric stability and invariants
   - Ensure `mse_backward` uses a consistent normalization convention (document it).
@@ -72,6 +73,8 @@ Goal: make the current API safe and predictable without changing the learning-or
 Deliverables
 - Updated docs and error messages.
 - CI running `cargo test`, `cargo fmt --check`, `cargo clippy`.
+
+Status: completed.
 
 ### M1: Model Definition 2.0 (Activations, Shapes, Builders)
 
@@ -94,6 +97,10 @@ Goal: a clean, explicit model definition that supports common networks.
   - Add a non-allocating prediction API:
     - `predict_one_into(&self, input: &[f32], scratch: &mut Scratch, out: &mut [f32]) -> Result<()>`.
   - Keep an ergonomic allocating wrapper for convenience.
+
+- Documentation polish
+  - Add rustdoc examples for common flows (`fit`, `predict`, low-level `forward`/`backward`).
+  - Add a clear "Panics vs Result" section in crate docs and README.
 
 Deliverables
 - Per-layer activations in `Mlp`.

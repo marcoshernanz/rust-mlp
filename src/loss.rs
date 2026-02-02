@@ -12,7 +12,13 @@
 /// Returns `0.5 * mean((pred - target)^2)`.
 #[inline]
 pub fn mse(pred: &[f32], target: &[f32]) -> f32 {
-    debug_assert_eq!(pred.len(), target.len());
+    assert_eq!(
+        pred.len(),
+        target.len(),
+        "pred len {} does not match target len {}",
+        pred.len(),
+        target.len()
+    );
 
     if pred.is_empty() {
         return 0.0;
@@ -35,8 +41,20 @@ pub fn mse(pred: &[f32], target: &[f32]) -> f32 {
 /// - `d_pred[i] = (pred[i] - target[i]) / N`
 #[inline]
 pub fn mse_backward(pred: &[f32], target: &[f32], d_pred: &mut [f32]) -> f32 {
-    debug_assert_eq!(pred.len(), target.len());
-    debug_assert_eq!(pred.len(), d_pred.len());
+    assert_eq!(
+        pred.len(),
+        target.len(),
+        "pred len {} does not match target len {}",
+        pred.len(),
+        target.len()
+    );
+    assert_eq!(
+        pred.len(),
+        d_pred.len(),
+        "pred len {} does not match d_pred len {}",
+        pred.len(),
+        d_pred.len()
+    );
 
     if pred.is_empty() {
         return 0.0;
