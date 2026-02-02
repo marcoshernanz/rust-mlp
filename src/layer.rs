@@ -22,12 +22,6 @@ pub struct Layer {
 
 impl Layer {
     #[inline]
-    pub fn new(in_dim: usize, out_dim: usize) -> Result<Self> {
-        let mut rng = rand::thread_rng();
-        Self::new_with_rng(in_dim, out_dim, Init::XavierTanh, &mut rng)
-    }
-
-    #[inline]
     pub fn new_with_seed(in_dim: usize, out_dim: usize, init: Init, seed: u64) -> Result<Self> {
         let mut rng = StdRng::seed_from_u64(seed);
         Self::new_with_rng(in_dim, out_dim, init, &mut rng)

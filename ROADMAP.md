@@ -83,7 +83,7 @@ Goal: a clean, explicit model definition that supports common networks.
   - Decide caching strategy: store post-activation outputs (current approach) and compute derivatives from them.
 
 - Layer spec and model builder
-  - Add `MlpBuilder` or `Mlp::new` overload that takes a list of layer sizes plus activations.
+  - Add `MlpBuilder` or an `Mlp::from_sizes` constructor that takes a list of layer sizes plus activations.
   - Provide a "sane defaults" initializer for each activation:
     - Tanh/Sigmoid: Xavier/Glorot.
     - ReLU/LeakyReLU: He/Kaiming.

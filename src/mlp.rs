@@ -34,14 +34,6 @@ pub struct Gradients {
 }
 
 impl Mlp {
-    /// Builds an MLP from a list of sizes.
-    ///
-    /// Example: `sizes = [in, hidden1, hidden2, out]`.
-    pub fn new(sizes: &[usize]) -> Result<Self> {
-        let mut rng = rand::thread_rng();
-        Self::new_with_rng(sizes, &mut rng)
-    }
-
     pub fn new_with_seed(sizes: &[usize], seed: u64) -> Result<Self> {
         let mut rng = StdRng::seed_from_u64(seed);
         Self::new_with_rng(sizes, &mut rng)
