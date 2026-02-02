@@ -283,7 +283,6 @@ These are not single milestones; they should be addressed incrementally.
 ### Error Design
 
 - Expand error variants carefully:
-  - `InvalidShape { what, expected, got }`
   - `InvalidConfig { what }`
   - `InvalidData { what }`
   - `Serde { what }` behind feature

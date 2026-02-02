@@ -5,7 +5,7 @@
 //! Conventions:
 //! - Scalars are `f32`.
 //! - Inputs/outputs are passed as slices (`&[f32]`, `&mut [f32]`) to avoid allocations.
-//! - Low-level APIs (`forward`, `backward`) use `debug_assert` shape checks.
+//! - Low-level APIs (`forward`, `backward`) panic on shape mismatches.
 //! - High-level APIs (`fit`, `predict`, `evaluate_*`) validate shapes and return `Result`.
 //!
 //! See `ROADMAP.md` for the production-readiness plan.

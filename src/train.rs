@@ -52,7 +52,7 @@ impl Mlp {
             return Err(Error::InvalidConfig("lr must be finite and > 0".to_owned()));
         }
 
-        let opt = Sgd::new(cfg.lr);
+        let opt = Sgd::new(cfg.lr)?;
         let mut trainer = Trainer::new(self);
         let mut epoch_loss = 0.0_f32;
 

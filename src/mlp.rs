@@ -37,45 +37,17 @@ impl Mlp {
     /// Builds an MLP from a list of sizes.
     ///
     /// Example: `sizes = [in, hidden1, hidden2, out]`.
-    pub fn new(sizes: &[usize]) -> Self {
+    pub fn new(sizes: &[usize]) -> Result<Self> {
         let mut rng = rand::thread_rng();
         Self::new_with_rng(sizes, &mut rng)
     }
 
-    /// Builds an MLP from a list of sizes.
-    ///
-    /// Example: `sizes = [in, hidden1, hidden2, out]`.
-    ///
-    /// Returns an error instead of panicking on invalid sizes.
-    pub fn try_new(sizes: &[usize]) -> Result<Self> {
-        let mut rng = rand::thread_rng();
-        Self::try_new_with_rng(sizes, &mut rng)
-    }
-
-    pub fn new_with_seed(sizes: &[usize], seed: u64) -> Self {
+    pub fn new_with_seed(sizes: &[usize], seed: u64) -> Result<Self> {
         let mut rng = StdRng::seed_from_u64(seed);
         Self::new_with_rng(sizes, &mut rng)
     }
 
-    pub fn try_new_with_seed(sizes: &[usize], seed: u64) -> Result<Self> {
-        let mut rng = StdRng::seed_from_u64(seed);
-        Self::try_new_with_rng(sizes, &mut rng)
-    }
-
-    pub fn new_with_rng<R: Rng + ?Sized>(sizes: &[usize], rng: &mut R) -> Self {
-        assert!(sizes.len() >= 2, "sizes must include input and output dims");
-        assert!(sizes.iter().all(|&d| d > 0), "all layer sizes must be > 0");
-
-        let mut layers = Vec::with_capacity(sizes.len() - 1);
-        for w in sizes.windows(2) {
-            let in_dim = w[0];
-            let out_dim = w[1];
-            layers.push(Layer::new_with_rng(in_dim, out_dim, Init::XavierTanh, rng));
-        }
-        Self { layers }
-    }
-
-    pub fn try_new_with_rng<R: Rng + ?Sized>(sizes: &[usize], rng: &mut R) -> Result<Self> {
+    pub fn new_with_rng<R: Rng + ?Sized>(sizes: &[usize], rng: &mut R) -> Result<Self> {
         if sizes.len() < 2 {
             return Err(Error::InvalidConfig(
                 "sizes must include input and output dims".to_owned(),
@@ -91,19 +63,25 @@ impl Mlp {
         for w in sizes.windows(2) {
             let in_dim = w[0];
             let out_dim = w[1];
-            layers.push(Layer::new_with_rng(in_dim, out_dim, Init::XavierTanh, rng));
+            layers.push(Layer::new_with_rng(in_dim, out_dim, Init::XavierTanh, rng)?);
         }
         Ok(Self { layers })
     }
 
     #[inline]
     pub fn input_dim(&self) -> usize {
-        self.layers.first().map(|l| l.in_dim()).unwrap_or(0)
+        self.layers
+            .first()
+            .expect("mlp must have at least one layer")
+            .in_dim()
     }
 
     #[inline]
     pub fn output_dim(&self) -> usize {
-        self.layers.last().map(|l| l.out_dim()).unwrap_or(0)
+        self.layers
+            .last()
+            .expect("mlp must have at least one layer")
+            .out_dim()
     }
 
     #[inline]
@@ -133,47 +111,49 @@ impl Mlp {
     /// - `input.len() == self.input_dim()`
     /// - `scratch` must be built for this `Mlp` (same layer count and output sizes)
     pub fn forward<'a>(&self, input: &[f32], scratch: &'a mut Scratch) -> &'a [f32] {
-        debug_assert_eq!(input.len(), self.input_dim());
-        debug_assert_eq!(scratch.layer_outputs.len(), self.layers.len());
+        assert_eq!(
+            input.len(),
+            self.input_dim(),
+            "input len {} does not match model input_dim {}",
+            input.len(),
+            self.input_dim()
+        );
+        assert_eq!(
+            scratch.layer_outputs.len(),
+            self.layers.len(),
+            "scratch has {} layer outputs, model has {} layers",
+            scratch.layer_outputs.len(),
+            self.layers.len()
+        );
 
         for (idx, layer) in self.layers.iter().enumerate() {
             if idx == 0 {
                 let out = &mut scratch.layer_outputs[0];
-                debug_assert_eq!(out.len(), layer.out_dim());
+                assert_eq!(
+                    out.len(),
+                    layer.out_dim(),
+                    "scratch layer 0 output len {} does not match layer out_dim {}",
+                    out.len(),
+                    layer.out_dim()
+                );
                 layer.forward(input, out);
             } else {
                 // Borrow the previous output immutably and the current output mutably.
                 let (left, right) = scratch.layer_outputs.split_at_mut(idx);
                 let prev = &left[idx - 1];
                 let out = &mut right[0];
-                debug_assert_eq!(out.len(), layer.out_dim());
+                assert_eq!(
+                    out.len(),
+                    layer.out_dim(),
+                    "scratch layer {idx} output len {} does not match layer out_dim {}",
+                    out.len(),
+                    layer.out_dim()
+                );
                 layer.forward(prev, out);
             }
         }
 
         scratch.output()
-    }
-
-    /// Forward pass for a single sample (validated).
-    ///
-    /// This is the safe variant of `forward` that returns `Result` on shape mismatches.
-    pub fn try_forward<'a>(&self, input: &[f32], scratch: &'a mut Scratch) -> Result<&'a [f32]> {
-        if input.len() != self.input_dim() {
-            return Err(Error::InvalidShape(format!(
-                "input len {} does not match model input_dim {}",
-                input.len(),
-                self.input_dim()
-            )));
-        }
-        if scratch.layer_outputs.len() != self.layers.len() {
-            return Err(Error::InvalidShape(format!(
-                "scratch has {} layer outputs, model has {} layers",
-                scratch.layer_outputs.len(),
-                self.layers.len()
-            )));
-        }
-
-        Ok(self.forward(input, scratch))
     }
 
     /// Backward pass for a single sample, using the internal `d_output` buffer.
@@ -193,21 +173,58 @@ impl Mlp {
         scratch: &Scratch,
         grads: &'a mut Gradients,
     ) -> &'a [f32] {
-        debug_assert_eq!(input.len(), self.input_dim());
-        debug_assert_eq!(scratch.layer_outputs.len(), self.layers.len());
+        assert_eq!(
+            input.len(),
+            self.input_dim(),
+            "input len {} does not match model input_dim {}",
+            input.len(),
+            self.input_dim()
+        );
+        assert_eq!(
+            scratch.layer_outputs.len(),
+            self.layers.len(),
+            "scratch has {} layer outputs, model has {} layers",
+            scratch.layer_outputs.len(),
+            self.layers.len()
+        );
 
-        debug_assert_eq!(grads.d_weights.len(), self.layers.len());
-        debug_assert_eq!(grads.d_biases.len(), self.layers.len());
-        debug_assert_eq!(grads.d_layer_outputs.len(), self.layers.len());
-        debug_assert_eq!(grads.d_input.len(), self.input_dim());
-
-        if self.layers.is_empty() {
-            grads.d_input.fill(0.0);
-            return &grads.d_input;
-        }
+        assert_eq!(
+            grads.d_weights.len(),
+            self.layers.len(),
+            "grads has {} d_weights entries, model has {} layers",
+            grads.d_weights.len(),
+            self.layers.len()
+        );
+        assert_eq!(
+            grads.d_biases.len(),
+            self.layers.len(),
+            "grads has {} d_biases entries, model has {} layers",
+            grads.d_biases.len(),
+            self.layers.len()
+        );
+        assert_eq!(
+            grads.d_layer_outputs.len(),
+            self.layers.len(),
+            "grads has {} d_layer_outputs entries, model has {} layers",
+            grads.d_layer_outputs.len(),
+            self.layers.len()
+        );
+        assert_eq!(
+            grads.d_input.len(),
+            self.input_dim(),
+            "grads d_input len {} does not match model input_dim {}",
+            grads.d_input.len(),
+            self.input_dim()
+        );
 
         let last = self.layers.len() - 1;
-        debug_assert_eq!(grads.d_layer_outputs[last].len(), self.output_dim());
+        assert_eq!(
+            grads.d_layer_outputs[last].len(),
+            self.output_dim(),
+            "grads d_output len {} does not match model output_dim {}",
+            grads.d_layer_outputs[last].len(),
+            self.output_dim()
+        );
 
         for idx in (0..self.layers.len()).rev() {
             let layer = &self.layers[idx];
@@ -219,7 +236,13 @@ impl Mlp {
             };
 
             let layer_output: &[f32] = &scratch.layer_outputs[idx];
-            debug_assert_eq!(layer_output.len(), layer.out_dim());
+            assert_eq!(
+                layer_output.len(),
+                layer.out_dim(),
+                "scratch layer {idx} output len {} does not match layer out_dim {}",
+                layer_output.len(),
+                layer.out_dim()
+            );
 
             if idx == 0 {
                 let d_outputs = &grads.d_layer_outputs[0];
@@ -252,107 +275,31 @@ impl Mlp {
         &grads.d_input
     }
 
-    /// Backward pass for a single sample (validated).
-    ///
-    /// This is the safe variant of `backward` that returns `Result` on shape mismatches.
-    pub fn try_backward<'a>(
-        &self,
-        input: &[f32],
-        scratch: &Scratch,
-        grads: &'a mut Gradients,
-    ) -> Result<&'a [f32]> {
-        if input.len() != self.input_dim() {
-            return Err(Error::InvalidShape(format!(
-                "input len {} does not match model input_dim {}",
-                input.len(),
-                self.input_dim()
-            )));
-        }
-        if scratch.layer_outputs.len() != self.layers.len() {
-            return Err(Error::InvalidShape(format!(
-                "scratch has {} layer outputs, model has {} layers",
-                scratch.layer_outputs.len(),
-                self.layers.len()
-            )));
-        }
-        if grads.d_weights.len() != self.layers.len() {
-            return Err(Error::InvalidShape(format!(
-                "grads has {} d_weights entries, model has {} layers",
-                grads.d_weights.len(),
-                self.layers.len()
-            )));
-        }
-        if grads.d_biases.len() != self.layers.len() {
-            return Err(Error::InvalidShape(format!(
-                "grads has {} d_biases entries, model has {} layers",
-                grads.d_biases.len(),
-                self.layers.len()
-            )));
-        }
-        if grads.d_layer_outputs.len() != self.layers.len() {
-            return Err(Error::InvalidShape(format!(
-                "grads has {} d_layer_outputs entries, model has {} layers",
-                grads.d_layer_outputs.len(),
-                self.layers.len()
-            )));
-        }
-        if grads.d_input.len() != self.input_dim() {
-            return Err(Error::InvalidShape(format!(
-                "grads d_input len {} does not match model input_dim {}",
-                grads.d_input.len(),
-                self.input_dim()
-            )));
-        }
-        if self.layers.is_empty() {
-            return Err(Error::InvalidConfig(
-                "cannot backprop through an empty model".to_owned(),
-            ));
-        }
-        if grads.d_layer_outputs.last().map(|v| v.len()) != Some(self.output_dim()) {
-            return Err(Error::InvalidShape(format!(
-                "grads d_output len {} does not match model output_dim {}",
-                grads.d_layer_outputs.last().map(|v| v.len()).unwrap_or(0),
-                self.output_dim()
-            )));
-        }
-
-        Ok(self.backward(input, scratch, grads))
-    }
-
     /// Applies an SGD update to all layers.
     #[inline]
     pub fn sgd_step(&mut self, grads: &Gradients, lr: f32) {
-        debug_assert_eq!(self.layers.len(), grads.d_weights.len());
-        debug_assert_eq!(self.layers.len(), grads.d_biases.len());
+        assert!(
+            lr.is_finite() && lr > 0.0,
+            "learning rate must be finite and > 0"
+        );
+        assert_eq!(
+            self.layers.len(),
+            grads.d_weights.len(),
+            "grads has {} d_weights entries, model has {} layers",
+            grads.d_weights.len(),
+            self.layers.len()
+        );
+        assert_eq!(
+            self.layers.len(),
+            grads.d_biases.len(),
+            "grads has {} d_biases entries, model has {} layers",
+            grads.d_biases.len(),
+            self.layers.len()
+        );
 
         for i in 0..self.layers.len() {
             self.layers[i].sgd_step(&grads.d_weights[i], &grads.d_biases[i], lr);
         }
-    }
-
-    pub fn try_sgd_step(&mut self, grads: &Gradients, lr: f32) -> Result<()> {
-        if !(lr.is_finite() && lr > 0.0) {
-            return Err(Error::InvalidConfig(
-                "learning rate must be finite and > 0".to_owned(),
-            ));
-        }
-        if grads.d_weights.len() != self.layers.len() {
-            return Err(Error::InvalidShape(format!(
-                "grads has {} d_weights entries, model has {} layers",
-                grads.d_weights.len(),
-                self.layers.len()
-            )));
-        }
-        if grads.d_biases.len() != self.layers.len() {
-            return Err(Error::InvalidShape(format!(
-                "grads has {} d_biases entries, model has {} layers",
-                grads.d_biases.len(),
-                self.layers.len()
-            )));
-        }
-
-        self.sgd_step(grads, lr);
-        Ok(())
     }
 }
 
@@ -385,7 +332,10 @@ impl Scratch {
 
     #[inline]
     pub fn output(&self) -> &[f32] {
-        self.layer_outputs.last().map(Vec::as_slice).unwrap_or(&[])
+        self.layer_outputs
+            .last()
+            .expect("scratch must have at least one layer output")
+            .as_slice()
     }
 }
 
@@ -469,8 +419,8 @@ mod tests {
 
     #[test]
     fn seeded_init_is_deterministic() {
-        let a = Mlp::new_with_seed(&[2, 3, 1], 123);
-        let b = Mlp::new_with_seed(&[2, 3, 1], 123);
+        let a = Mlp::new_with_seed(&[2, 3, 1], 123).unwrap();
+        let b = Mlp::new_with_seed(&[2, 3, 1], 123).unwrap();
 
         let mut scratch_a = a.scratch();
         let mut scratch_b = b.scratch();
@@ -483,7 +433,7 @@ mod tests {
 
     #[test]
     fn backward_matches_numeric_gradients() {
-        let mut mlp = Mlp::new_with_seed(&[2, 3, 1], 0);
+        let mut mlp = Mlp::new_with_seed(&[2, 3, 1], 0).unwrap();
         let mut scratch = mlp.scratch();
         let mut grads = mlp.gradients();
 
@@ -584,7 +534,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn forward_panics_on_input_shape_mismatch() {
-        let mlp = Mlp::new_with_seed(&[2, 3, 1], 0);
+        let mlp = Mlp::new_with_seed(&[2, 3, 1], 0).unwrap();
         let mut scratch = mlp.scratch();
         let input = [0.0_f32; 3];
         mlp.forward(&input, &mut scratch);
@@ -594,8 +544,8 @@ mod tests {
     #[test]
     #[should_panic]
     fn forward_panics_on_scratch_mismatch() {
-        let a = Mlp::new_with_seed(&[2, 3, 1], 0);
-        let b = Mlp::new_with_seed(&[2, 4, 1], 0);
+        let a = Mlp::new_with_seed(&[2, 3, 1], 0).unwrap();
+        let b = Mlp::new_with_seed(&[2, 4, 1], 0).unwrap();
         let mut scratch_b = b.scratch();
         let input = [0.0_f32; 2];
         a.forward(&input, &mut scratch_b);

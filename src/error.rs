@@ -4,7 +4,6 @@ use std::fmt;
 pub enum Error {
     InvalidData(String),
     InvalidConfig(String),
-    InvalidShape(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -14,7 +13,6 @@ impl fmt::Display for Error {
         match self {
             Error::InvalidData(msg) => write!(f, "invalid data: {msg}"),
             Error::InvalidConfig(msg) => write!(f, "invalid config: {msg}"),
-            Error::InvalidShape(msg) => write!(f, "invalid shape: {msg}"),
         }
     }
 }

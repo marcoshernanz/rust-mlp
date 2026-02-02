@@ -22,25 +22,15 @@ pub struct Layer {
 
 impl Layer {
     #[inline]
-    pub fn new(in_dim: usize, out_dim: usize) -> Self {
+    pub fn new(in_dim: usize, out_dim: usize) -> Result<Self> {
         let mut rng = rand::thread_rng();
         Self::new_with_rng(in_dim, out_dim, Init::XavierTanh, &mut rng)
     }
 
-    pub fn try_new(in_dim: usize, out_dim: usize) -> Result<Self> {
-        let mut rng = rand::thread_rng();
-        Self::try_new_with_rng(in_dim, out_dim, Init::XavierTanh, &mut rng)
-    }
-
     #[inline]
-    pub fn new_with_seed(in_dim: usize, out_dim: usize, init: Init, seed: u64) -> Self {
+    pub fn new_with_seed(in_dim: usize, out_dim: usize, init: Init, seed: u64) -> Result<Self> {
         let mut rng = StdRng::seed_from_u64(seed);
         Self::new_with_rng(in_dim, out_dim, init, &mut rng)
-    }
-
-    pub fn try_new_with_seed(in_dim: usize, out_dim: usize, init: Init, seed: u64) -> Result<Self> {
-        let mut rng = StdRng::seed_from_u64(seed);
-        Self::try_new_with_rng(in_dim, out_dim, init, &mut rng)
     }
 
     pub fn new_with_rng<R: Rng + ?Sized>(
@@ -48,8 +38,10 @@ impl Layer {
         out_dim: usize,
         init: Init,
         rng: &mut R,
-    ) -> Self {
-        assert!(in_dim > 0 && out_dim > 0, "layer dims must be > 0");
+    ) -> Result<Self> {
+        if in_dim == 0 || out_dim == 0 {
+            return Err(Error::InvalidConfig("layer dims must be > 0".to_owned()));
+        }
 
         let mut weights = vec![0.0; in_dim * out_dim];
         match init {
@@ -67,25 +59,12 @@ impl Layer {
 
         let biases = vec![0.0; out_dim];
 
-        Self {
+        Ok(Self {
             in_dim,
             out_dim,
             weights,
             biases,
-        }
-    }
-
-    pub fn try_new_with_rng<R: Rng + ?Sized>(
-        in_dim: usize,
-        out_dim: usize,
-        init: Init,
-        rng: &mut R,
-    ) -> Result<Self> {
-        if in_dim == 0 || out_dim == 0 {
-            return Err(Error::InvalidConfig("layer dims must be > 0".to_owned()));
-        }
-
-        Ok(Self::new_with_rng(in_dim, out_dim, init, rng))
+        })
     }
 
     #[inline]
@@ -226,8 +205,8 @@ mod tests {
 
     #[test]
     fn seeded_init_is_deterministic() {
-        let a = Layer::new_with_seed(3, 2, Init::XavierTanh, 123);
-        let b = Layer::new_with_seed(3, 2, Init::XavierTanh, 123);
+        let a = Layer::new_with_seed(3, 2, Init::XavierTanh, 123).unwrap();
+        let b = Layer::new_with_seed(3, 2, Init::XavierTanh, 123).unwrap();
         assert_eq!(a.weights, b.weights);
         assert_eq!(a.biases, b.biases);
     }
@@ -236,7 +215,7 @@ mod tests {
     fn backward_matches_numeric_gradients() {
         let in_dim = 3;
         let out_dim = 2;
-        let mut layer = Layer::new_with_seed(in_dim, out_dim, Init::XavierTanh, 0);
+        let mut layer = Layer::new_with_seed(in_dim, out_dim, Init::XavierTanh, 0).unwrap();
 
         let mut input = vec![0.3_f32, -0.7_f32, 0.1_f32];
         let target = vec![0.2_f32, -0.1_f32];
@@ -319,7 +298,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn forward_panics_on_input_shape_mismatch() {
-        let layer = Layer::new_with_seed(3, 2, Init::XavierTanh, 0);
+        let layer = Layer::new_with_seed(3, 2, Init::XavierTanh, 0).unwrap();
         let input = vec![0.0_f32; 2];
         let mut out = vec![0.0_f32; 2];
         layer.forward(&input, &mut out);
@@ -329,7 +308,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn forward_panics_on_output_shape_mismatch() {
-        let layer = Layer::new_with_seed(3, 2, Init::XavierTanh, 0);
+        let layer = Layer::new_with_seed(3, 2, Init::XavierTanh, 0).unwrap();
         let input = vec![0.0_f32; 3];
         let mut out = vec![0.0_f32; 1];
         layer.forward(&input, &mut out);

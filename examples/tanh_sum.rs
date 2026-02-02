@@ -5,7 +5,7 @@ use rand::rngs::StdRng;
 fn main() {
     // Task: learn y = tanh(x0 + x1)
     // This is representable by a single layer: y = tanh(w0*x0 + w1*x1 + b).
-    let mut mlp = rust_mlp::Mlp::new_with_seed(&[2, 1], 0);
+    let mut mlp = rust_mlp::Mlp::new_with_seed(&[2, 1], 0).unwrap();
 
     let mut rng = StdRng::seed_from_u64(1);
     let dist = Uniform::new(-1.0_f32, 1.0_f32);

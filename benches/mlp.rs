@@ -3,7 +3,7 @@ use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rust_mlp::{Mlp, loss};
 
 fn mlp_forward_bench(c: &mut Criterion) {
-    let mlp = Mlp::new_with_seed(&[128, 256, 256, 10], 0);
+    let mlp = Mlp::new_with_seed(&[128, 256, 256, 10], 0).unwrap();
     let mut scratch = mlp.scratch();
     let input = vec![0.1_f32; mlp.input_dim()];
 
@@ -16,7 +16,7 @@ fn mlp_forward_bench(c: &mut Criterion) {
 }
 
 fn mlp_backward_bench(c: &mut Criterion) {
-    let mlp = Mlp::new_with_seed(&[128, 256, 256, 10], 0);
+    let mlp = Mlp::new_with_seed(&[128, 256, 256, 10], 0).unwrap();
     let mut scratch = mlp.scratch();
     let mut grads = mlp.gradients();
     let input = vec![0.1_f32; mlp.input_dim()];
