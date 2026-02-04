@@ -65,7 +65,7 @@ These validate inputs and return `Result`.
 ## Example: train + evaluate
 
 ```rust
-use rust_mlp::{Dataset, FitConfig, Mlp};
+use rust_mlp::{Activation, Dataset, FitConfig, MlpBuilder};
 
 fn main() -> rust_mlp::Result<()> {
     // XOR-ish tiny dataset (for demonstration).
@@ -78,8 +78,11 @@ fn main() -> rust_mlp::Result<()> {
     let ys = vec![vec![0.0], vec![1.0], vec![1.0], vec![0.0]];
     let train = Dataset::from_rows(&xs, &ys)?;
 
-    // 2 -> 8 -> 1 MLP with deterministic initialization.
-    let mut mlp = Mlp::new_with_seed(&[2, 8, 1], 123)?;
+    // 2 -> 8 (tanh) -> 1 (identity) MLP with deterministic initialization.
+    let mut mlp = MlpBuilder::new(2)?
+        .add_layer(8, Activation::Tanh)?
+        .add_layer(1, Activation::Identity)?
+        .build_with_seed(123)?;
 
     let report = mlp.fit(
         &train,
@@ -101,10 +104,13 @@ fn main() -> rust_mlp::Result<()> {
 If you want to avoid allocating the output buffer on each call, reuse `Scratch` and copy the returned slice.
 
 ```rust
-use rust_mlp::Mlp;
+use rust_mlp::{Activation, MlpBuilder};
 
 fn main() -> rust_mlp::Result<()> {
-    let mlp = Mlp::new_with_seed(&[3, 5, 2], 0)?;
+    let mlp = MlpBuilder::new(3)?
+        .add_layer(5, Activation::Tanh)?
+        .add_layer(2, Activation::Identity)?
+        .build_with_seed(0)?;
     let mut scratch = mlp.scratch();
 
     let x = [0.1_f32, -0.2, 0.3];
@@ -123,7 +129,7 @@ fn main() -> rust_mlp::Result<()> {
 
 ## Determinism
 
-- Use `Mlp::new_with_seed` and `Layer::new_with_seed` for deterministic initialization.
+- Use `MlpBuilder::build_with_seed` for deterministic initialization.
 
 ## Panics vs. `Result`
 

@@ -1,31 +1,43 @@
 //! Dense layer implementation.
 //!
-//! This module provides a single dense layer with `tanh` activation and the associated
-//! backward/SGD update routines.
+//! A `Layer` is a dense affine transform followed by an element-wise activation:
+//!
+//! - `z = W x + b`
+//! - `y = activation(z)`
+//!
+//! The activation is stored in the layer so an `Mlp` can mix activation functions
+//! across layers.
 //!
 //! Shape mismatches are treated as programmer error and will panic via `assert!`.
 
+use rand::Rng;
 use rand::distributions::{Distribution, Uniform};
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
 
+use crate::Activation;
 use crate::{Error, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Initialization scheme for layer weights.
 pub enum Init {
     Zeros,
-    /// Xavier/Glorot uniform init, a good default for `tanh`.
-    XavierTanh,
+    /// Xavier/Glorot uniform init.
+    ///
+    /// This is a good default for `tanh`, `sigmoid`, and `identity` activations.
+    Xavier,
+    /// He/Kaiming uniform init.
+    ///
+    /// This is a good default for `ReLU`-family activations.
+    He,
 }
 
 #[derive(Debug, Clone)]
-/// A dense layer: `y = tanh(Wx + b)`.
+/// A dense layer: `y = activation(Wx + b)`.
 ///
 /// Weights use row-major layout with shape `(out_dim, in_dim)`.
 pub struct Layer {
     in_dim: usize,
     out_dim: usize,
+    activation: Activation,
     /// Row-major matrix with shape (out_dim, in_dim).
     weights: Vec<f32>,
     biases: Vec<f32>,
@@ -33,29 +45,41 @@ pub struct Layer {
 
 impl Layer {
     #[inline]
-    /// Construct a layer using a deterministic seed.
-    pub fn new_with_seed(in_dim: usize, out_dim: usize, init: Init, seed: u64) -> Result<Self> {
-        let mut rng = StdRng::seed_from_u64(seed);
-        Self::new_with_rng(in_dim, out_dim, init, &mut rng)
+    /// Returns this layer's activation.
+    pub fn activation(&self) -> Activation {
+        self.activation
     }
+}
 
+impl Layer {
     pub fn new_with_rng<R: Rng + ?Sized>(
         in_dim: usize,
         out_dim: usize,
         init: Init,
+        activation: Activation,
         rng: &mut R,
     ) -> Result<Self> {
         if in_dim == 0 || out_dim == 0 {
             return Err(Error::InvalidConfig("layer dims must be > 0".to_owned()));
         }
 
+        activation.validate()?;
+
         let mut weights = vec![0.0; in_dim * out_dim];
         match init {
             Init::Zeros => {}
-            Init::XavierTanh => {
+            Init::Xavier => {
                 let fan_in = in_dim as f32;
                 let fan_out = out_dim as f32;
                 let limit = (6.0 / (fan_in + fan_out)).sqrt();
+                let dist = Uniform::new(-limit, limit);
+                for w in &mut weights {
+                    *w = dist.sample(rng);
+                }
+            }
+            Init::He => {
+                let fan_in = in_dim as f32;
+                let limit = (6.0 / fan_in).sqrt();
                 let dist = Uniform::new(-limit, limit);
                 for w in &mut weights {
                     *w = dist.sample(rng);
@@ -68,6 +92,7 @@ impl Layer {
         Ok(Self {
             in_dim,
             out_dim,
+            activation,
             weights,
             biases,
         })
@@ -101,7 +126,7 @@ impl Layer {
     ///
     /// Computes:
     /// - `z = W * inputs + b`
-    /// - `outputs = tanh(z)`
+    /// - `outputs = activation(z)`
     ///
     /// Shape contract:
     /// - `inputs.len() == self.in_dim`
@@ -123,13 +148,15 @@ impl Layer {
             self.out_dim
         );
 
+        let activation = self.activation;
+
         for (o, out) in outputs.iter_mut().enumerate() {
             let mut sum = self.biases[o];
             let row = o * self.in_dim;
             for (i, &x) in inputs.iter().enumerate() {
                 sum = self.weights[row + i].mul_add(x, sum);
             }
-            *out = sum.tanh();
+            *out = activation.forward(sum);
         }
     }
 
@@ -208,9 +235,10 @@ impl Layer {
         // d_inputs accumulates contributions from all outputs.
         d_inputs.fill(0.0);
 
+        let activation = self.activation;
+
         for o in 0..self.out_dim {
-            // tanh'(z) = 1 - tanh(z)^2 = 1 - outputs[o]^2
-            let d_z = d_outputs[o] * (1.0 - outputs[o] * outputs[o]);
+            let d_z = d_outputs[o] * activation.grad_from_output(outputs[o]);
             d_biases[o] = d_z;
 
             let row = o * self.in_dim;
@@ -256,6 +284,8 @@ impl Layer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
 
     fn loss_for_layer(layer: &Layer, input: &[f32], target: &[f32], out: &mut [f32]) -> f32 {
         layer.forward(input, out);
@@ -273,8 +303,10 @@ mod tests {
 
     #[test]
     fn seeded_init_is_deterministic() {
-        let a = Layer::new_with_seed(3, 2, Init::XavierTanh, 123).unwrap();
-        let b = Layer::new_with_seed(3, 2, Init::XavierTanh, 123).unwrap();
+        let mut rng_a = StdRng::seed_from_u64(123);
+        let mut rng_b = StdRng::seed_from_u64(123);
+        let a = Layer::new_with_rng(3, 2, Init::Xavier, Activation::Tanh, &mut rng_a).unwrap();
+        let b = Layer::new_with_rng(3, 2, Init::Xavier, Activation::Tanh, &mut rng_b).unwrap();
         assert_eq!(a.weights, b.weights);
         assert_eq!(a.biases, b.biases);
     }
@@ -283,7 +315,9 @@ mod tests {
     fn backward_matches_numeric_gradients() {
         let in_dim = 3;
         let out_dim = 2;
-        let mut layer = Layer::new_with_seed(in_dim, out_dim, Init::XavierTanh, 0).unwrap();
+        let mut rng = StdRng::seed_from_u64(0);
+        let mut layer =
+            Layer::new_with_rng(in_dim, out_dim, Init::Xavier, Activation::Tanh, &mut rng).unwrap();
 
         let mut input = vec![0.3_f32, -0.7_f32, 0.1_f32];
         let target = vec![0.2_f32, -0.1_f32];
@@ -365,7 +399,8 @@ mod tests {
     #[test]
     #[should_panic]
     fn forward_panics_on_input_shape_mismatch() {
-        let layer = Layer::new_with_seed(3, 2, Init::XavierTanh, 0).unwrap();
+        let mut rng = StdRng::seed_from_u64(0);
+        let layer = Layer::new_with_rng(3, 2, Init::Xavier, Activation::Tanh, &mut rng).unwrap();
         let input = vec![0.0_f32; 2];
         let mut out = vec![0.0_f32; 2];
         layer.forward(&input, &mut out);
@@ -374,7 +409,8 @@ mod tests {
     #[test]
     #[should_panic]
     fn forward_panics_on_output_shape_mismatch() {
-        let layer = Layer::new_with_seed(3, 2, Init::XavierTanh, 0).unwrap();
+        let mut rng = StdRng::seed_from_u64(0);
+        let layer = Layer::new_with_rng(3, 2, Init::Xavier, Activation::Tanh, &mut rng).unwrap();
         let input = vec![0.0_f32; 3];
         let mut out = vec![0.0_f32; 1];
         layer.forward(&input, &mut out);

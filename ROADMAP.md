@@ -91,7 +91,7 @@ Goal: a clean, explicit model definition that supports common networks.
     - Tanh/Sigmoid: Xavier/Glorot.
     - ReLU/LeakyReLU: He/Kaiming.
     - Identity: Xavier or small uniform.
-  - Keep `new_with_seed` for deterministic init.
+  - Provide deterministic init via `MlpBuilder::build_with_seed`.
 
 - Shape-safe inference API
   - Add a non-allocating prediction API:

@@ -6,14 +6,11 @@
 //!
 //! Shape mismatches are treated as programmer error and will panic via `assert!`.
 
+use crate::Layer;
 use crate::{Error, Result};
-use crate::{Init, Layer};
 
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
-
-#[derive(Debug, Clone)]
 /// A feed-forward multi-layer perceptron composed of dense layers.
+#[derive(Debug, Clone)]
 pub struct Mlp {
     layers: Vec<Layer>,
 }
@@ -22,7 +19,6 @@ pub struct Mlp {
 ///
 /// The output of the most recent forward pass lives inside `Scratch`.
 #[derive(Debug, Clone)]
-/// Reusable activations buffer for `Mlp::forward`.
 pub struct Scratch {
     layer_outputs: Vec<Vec<f32>>,
 }
@@ -31,7 +27,6 @@ pub struct Scratch {
 ///
 /// Allocate once via `Mlp::gradients()` and reuse across training steps.
 #[derive(Debug, Clone)]
-/// Reusable gradient buffers for `Mlp::backward`.
 pub struct Gradients {
     d_weights: Vec<Vec<f32>>,
     d_biases: Vec<Vec<f32>>,
@@ -45,40 +40,12 @@ pub struct Gradients {
 }
 
 impl Mlp {
-    /// Construct an MLP with deterministic initialization.
-    ///
-    /// `sizes` is a list of layer sizes including input and output.
-    pub fn new_with_seed(sizes: &[usize], seed: u64) -> Result<Self> {
-        let mut rng = StdRng::seed_from_u64(seed);
-        Self::new_with_rng(sizes, &mut rng)
+    pub(crate) fn from_layers(layers: Vec<Layer>) -> Self {
+        Self { layers }
     }
 
-    /// Construct an MLP using the provided RNG.
-    ///
-    /// `sizes` is a list of layer sizes including input and output.
-    pub fn new_with_rng<R: Rng + ?Sized>(sizes: &[usize], rng: &mut R) -> Result<Self> {
-        if sizes.len() < 2 {
-            return Err(Error::InvalidConfig(
-                "sizes must include input and output dims".to_owned(),
-            ));
-        }
-        if sizes.contains(&0) {
-            return Err(Error::InvalidConfig(
-                "all layer sizes must be > 0".to_owned(),
-            ));
-        }
-
-        let mut layers = Vec::with_capacity(sizes.len() - 1);
-        for w in sizes.windows(2) {
-            let in_dim = w[0];
-            let out_dim = w[1];
-            layers.push(Layer::new_with_rng(in_dim, out_dim, Init::XavierTanh, rng)?);
-        }
-        Ok(Self { layers })
-    }
-
-    #[inline]
     /// Returns the expected input dimension.
+    #[inline]
     pub fn input_dim(&self) -> usize {
         self.layers
             .first()
@@ -86,8 +53,8 @@ impl Mlp {
             .in_dim()
     }
 
-    #[inline]
     /// Returns the produced output dimension.
+    #[inline]
     pub fn output_dim(&self) -> usize {
         self.layers
             .last()
@@ -95,8 +62,8 @@ impl Mlp {
             .out_dim()
     }
 
-    #[inline]
     /// Returns the number of layers.
+    #[inline]
     pub fn num_layers(&self) -> usize {
         self.layers.len()
     }
@@ -315,6 +282,52 @@ impl Mlp {
             self.layers[i].sgd_step(&grads.d_weights[i], &grads.d_biases[i], lr);
         }
     }
+
+    /// Shape-safe, non-allocating inference for a single input.
+    ///
+    /// This validates shapes and returns `Result` instead of panicking.
+    /// Internally it uses the low-level `forward` hot path.
+    pub fn predict_one_into(
+        &self,
+        input: &[f32],
+        scratch: &mut Scratch,
+        out: &mut [f32],
+    ) -> Result<()> {
+        if input.len() != self.input_dim() {
+            return Err(Error::InvalidData(format!(
+                "input len {} does not match model input_dim {}",
+                input.len(),
+                self.input_dim()
+            )));
+        }
+        if out.len() != self.output_dim() {
+            return Err(Error::InvalidData(format!(
+                "out len {} does not match model output_dim {}",
+                out.len(),
+                self.output_dim()
+            )));
+        }
+        if scratch.layer_outputs.len() != self.layers.len() {
+            return Err(Error::InvalidData(format!(
+                "scratch has {} layer outputs, model has {} layers",
+                scratch.layer_outputs.len(),
+                self.layers.len()
+            )));
+        }
+        for (idx, (buf, layer)) in scratch.layer_outputs.iter().zip(&self.layers).enumerate() {
+            if buf.len() != layer.out_dim() {
+                return Err(Error::InvalidData(format!(
+                    "scratch layer {idx} output len {} does not match layer out_dim {}",
+                    buf.len(),
+                    layer.out_dim()
+                )));
+            }
+        }
+
+        let y = self.forward(input, scratch);
+        out.copy_from_slice(y);
+        Ok(())
+    }
 }
 
 /// Reusable buffers for training a specific `Mlp`.
@@ -424,6 +437,10 @@ impl Gradients {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+
+    use crate::{Activation, MlpBuilder};
 
     fn loss_for_mlp(mlp: &Mlp, input: &[f32], target: &[f32], scratch: &mut Scratch) -> f32 {
         mlp.forward(input, scratch);
@@ -440,22 +457,37 @@ mod tests {
     }
 
     #[test]
-    fn seeded_init_is_deterministic() {
-        let a = Mlp::new_with_seed(&[2, 3, 1], 123).unwrap();
-        let b = Mlp::new_with_seed(&[2, 3, 1], 123).unwrap();
+    fn predict_one_into_validates_shapes() {
+        let mlp = MlpBuilder::new(2)
+            .unwrap()
+            .add_layer(3, Activation::Tanh)
+            .unwrap()
+            .add_layer(1, Activation::Identity)
+            .unwrap()
+            .build_with_seed(0)
+            .unwrap();
 
-        let mut scratch_a = a.scratch();
-        let mut scratch_b = b.scratch();
-        let input = [0.3_f32, -0.7_f32];
+        let mut scratch = mlp.scratch();
+        let mut out = [0.0_f32; 1];
 
-        let out_a = a.forward(&input, &mut scratch_a).to_vec();
-        let out_b = b.forward(&input, &mut scratch_b).to_vec();
-        assert_eq!(out_a, out_b);
+        let ok = mlp.predict_one_into(&[0.1, 0.2], &mut scratch, &mut out);
+        assert!(ok.is_ok());
+
+        let err = mlp.predict_one_into(&[0.1_f32], &mut scratch, &mut out);
+        assert!(err.is_err());
     }
 
     #[test]
-    fn backward_matches_numeric_gradients() {
-        let mut mlp = Mlp::new_with_seed(&[2, 3, 1], 0).unwrap();
+    fn backward_matches_numeric_gradients_for_tanh() {
+        let mut mlp = MlpBuilder::new(2)
+            .unwrap()
+            .add_layer(3, Activation::Tanh)
+            .unwrap()
+            .add_layer(1, Activation::Tanh)
+            .unwrap()
+            .build_with_seed(0)
+            .unwrap();
+
         let mut scratch = mlp.scratch();
         let mut grads = mlp.gradients();
 
@@ -555,19 +587,17 @@ mod tests {
     #[test]
     #[should_panic]
     fn forward_panics_on_input_shape_mismatch() {
-        let mlp = Mlp::new_with_seed(&[2, 3, 1], 0).unwrap();
+        let mut rng = StdRng::seed_from_u64(0);
+        let mlp = MlpBuilder::new(2)
+            .unwrap()
+            .add_layer(3, Activation::Tanh)
+            .unwrap()
+            .add_layer(1, Activation::Tanh)
+            .unwrap()
+            .build_with_rng(&mut rng)
+            .unwrap();
         let mut scratch = mlp.scratch();
         let input = [0.0_f32; 3];
         mlp.forward(&input, &mut scratch);
-    }
-
-    #[test]
-    #[should_panic]
-    fn forward_panics_on_scratch_mismatch() {
-        let a = Mlp::new_with_seed(&[2, 3, 1], 0).unwrap();
-        let b = Mlp::new_with_seed(&[2, 4, 1], 0).unwrap();
-        let mut scratch_b = b.scratch();
-        let input = [0.0_f32; 2];
-        a.forward(&input, &mut scratch_b);
     }
 }

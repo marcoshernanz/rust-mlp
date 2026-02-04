@@ -1,9 +1,18 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
-use rust_mlp::{Mlp, loss};
+use rust_mlp::{Activation, MlpBuilder, loss};
 
 fn mlp_forward_bench(c: &mut Criterion) {
-    let mlp = Mlp::new_with_seed(&[128, 256, 256, 10], 0).unwrap();
+    let mlp = MlpBuilder::new(128)
+        .unwrap()
+        .add_layer(256, Activation::Tanh)
+        .unwrap()
+        .add_layer(256, Activation::Tanh)
+        .unwrap()
+        .add_layer(10, Activation::Identity)
+        .unwrap()
+        .build_with_seed(0)
+        .unwrap();
     let mut scratch = mlp.scratch();
     let input = vec![0.1_f32; mlp.input_dim()];
 
@@ -16,7 +25,16 @@ fn mlp_forward_bench(c: &mut Criterion) {
 }
 
 fn mlp_backward_bench(c: &mut Criterion) {
-    let mlp = Mlp::new_with_seed(&[128, 256, 256, 10], 0).unwrap();
+    let mlp = MlpBuilder::new(128)
+        .unwrap()
+        .add_layer(256, Activation::Tanh)
+        .unwrap()
+        .add_layer(256, Activation::Tanh)
+        .unwrap()
+        .add_layer(10, Activation::Identity)
+        .unwrap()
+        .build_with_seed(0)
+        .unwrap();
     let mut scratch = mlp.scratch();
     let mut grads = mlp.gradients();
     let input = vec![0.1_f32; mlp.input_dim()];

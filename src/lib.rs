@@ -10,6 +10,33 @@
 //!
 //! See `ROADMAP.md` for the production-readiness plan.
 
+//! # Quick start
+//!
+//! ```rust
+//! use rust_mlp::{Activation, FitConfig, MlpBuilder};
+//!
+//! # fn main() -> rust_mlp::Result<()> {
+//! let xs = vec![
+//!     vec![0.0, 0.0],
+//!     vec![0.0, 1.0],
+//!     vec![1.0, 0.0],
+//!     vec![1.0, 1.0],
+//! ];
+//! let ys = vec![vec![0.0], vec![1.0], vec![1.0], vec![0.0]];
+//! let train = rust_mlp::Dataset::from_rows(&xs, &ys)?;
+//!
+//! let mut mlp = MlpBuilder::new(2)?
+//!     .add_layer(8, Activation::ReLU)?
+//!     .add_layer(1, Activation::Sigmoid)?
+//!     .build_with_seed(0)?;
+//!
+//! let _report = mlp.fit(&train, FitConfig { epochs: 200, lr: 0.1 })?;
+//! Ok(())
+//! # }
+//! ```
+
+pub mod activation;
+pub mod builder;
 pub mod data;
 pub mod error;
 pub mod layer;
@@ -18,6 +45,8 @@ pub mod mlp;
 pub mod optim;
 pub mod train;
 
+pub use activation::Activation;
+pub use builder::MlpBuilder;
 pub use data::{Dataset, Inputs};
 pub use error::{Error, Result};
 pub use layer::{Init, Layer};
