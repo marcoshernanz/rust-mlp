@@ -366,6 +366,29 @@ impl Layer {
             *b -= lr * db;
         }
     }
+
+    /// Apply decoupled weight decay to weights only.
+    ///
+    /// `w -= lr * weight_decay * w`.
+    pub(crate) fn apply_weight_decay(&mut self, lr: f32, weight_decay: f32) {
+        assert!(
+            lr.is_finite() && lr > 0.0,
+            "learning rate must be finite and > 0"
+        );
+        assert!(
+            weight_decay.is_finite() && weight_decay >= 0.0,
+            "weight_decay must be finite and >= 0"
+        );
+
+        if weight_decay == 0.0 {
+            return;
+        }
+
+        let scale = lr * weight_decay;
+        for w in &mut self.weights {
+            *w -= scale * *w;
+        }
+    }
 }
 
 #[cfg(test)]

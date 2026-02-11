@@ -3,7 +3,10 @@
 //! These methods validate dataset shapes and return `Result`, while internally using
 //! allocation-free per-sample forward/backward passes.
 
-use crate::{Activation, Dataset, Error, Layer, Loss, Metric, Mlp, Result, Sgd, Trainer, loss};
+use crate::{
+    Activation, Dataset, Error, Layer, Loss, Metric, Mlp, Optimizer, OptimizerState, Result,
+    Trainer, loss,
+};
 
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -19,6 +22,67 @@ pub enum Shuffle {
     Seeded(u64),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+/// Learning rate schedule (applied per epoch).
+pub enum LrSchedule {
+    /// Keep `lr` constant.
+    #[default]
+    Constant,
+    /// Step decay: `lr = lr0 * gamma^(epoch / step_size)`.
+    Step { step_size: usize, gamma: f32 },
+    /// Cosine annealing from `lr0` down to `min_lr`.
+    CosineAnnealing { min_lr: f32 },
+}
+
+impl LrSchedule {
+    pub fn validate(self) -> Result<()> {
+        match self {
+            LrSchedule::Constant => Ok(()),
+            LrSchedule::Step { step_size, gamma } => {
+                if step_size == 0 {
+                    return Err(Error::InvalidConfig(
+                        "lr_schedule step_size must be > 0".to_owned(),
+                    ));
+                }
+                if !(gamma.is_finite() && gamma > 0.0) {
+                    return Err(Error::InvalidConfig(format!(
+                        "lr_schedule gamma must be finite and > 0, got {gamma}"
+                    )));
+                }
+                Ok(())
+            }
+            LrSchedule::CosineAnnealing { min_lr } => {
+                if !(min_lr.is_finite() && min_lr > 0.0) {
+                    return Err(Error::InvalidConfig(format!(
+                        "lr_schedule min_lr must be finite and > 0, got {min_lr}"
+                    )));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn lr_at_epoch(self, lr0: f32, epoch: usize, epochs: usize) -> f32 {
+        match self {
+            LrSchedule::Constant => lr0,
+            LrSchedule::Step { step_size, gamma } => {
+                let k = epoch / step_size;
+                lr0 * gamma.powi(k as i32)
+            }
+            LrSchedule::CosineAnnealing { min_lr } => {
+                if epochs <= 1 {
+                    return lr0;
+                }
+
+                let t = epoch as f32;
+                let t_max = (epochs - 1) as f32;
+                let cos = (std::f32::consts::PI * (t / t_max)).cos();
+                min_lr + (lr0 - min_lr) * 0.5 * (1.0 + cos)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 /// Configuration for `Mlp::fit`.
 pub struct FitConfig {
@@ -26,6 +90,10 @@ pub struct FitConfig {
     pub lr: f32,
     pub batch_size: usize,
     pub shuffle: Shuffle,
+    pub lr_schedule: LrSchedule,
+    pub optimizer: Optimizer,
+    pub weight_decay: f32,
+    pub grad_clip_norm: Option<f32>,
     pub loss: Loss,
     pub metrics: Vec<Metric>,
 }
@@ -37,6 +105,10 @@ impl Default for FitConfig {
             lr: 1e-2,
             batch_size: 1,
             shuffle: Shuffle::None,
+            lr_schedule: LrSchedule::Constant,
+            optimizer: Optimizer::Sgd,
+            weight_decay: 0.0,
+            grad_clip_norm: None,
             loss: Loss::Mse,
             metrics: Vec::new(),
         }
@@ -146,7 +218,23 @@ impl Mlp {
             return Err(Error::InvalidConfig("batch_size must be > 0".to_owned()));
         }
 
-        let opt = Sgd::new(cfg.lr)?;
+        cfg.lr_schedule.validate()?;
+
+        cfg.optimizer.validate()?;
+        if !(cfg.weight_decay.is_finite() && cfg.weight_decay >= 0.0) {
+            return Err(Error::InvalidConfig(
+                "weight_decay must be finite and >= 0".to_owned(),
+            ));
+        }
+        if let Some(v) = cfg.grad_clip_norm
+            && !(v.is_finite() && v > 0.0)
+        {
+            return Err(Error::InvalidConfig(
+                "grad_clip_norm must be finite and > 0".to_owned(),
+            ));
+        }
+
+        let mut opt_state: OptimizerState = cfg.optimizer.state(self)?;
         let mut trainer = Trainer::new(self);
         let mut reports = Vec::with_capacity(cfg.epochs);
 
@@ -161,7 +249,10 @@ impl Mlp {
             Shuffle::Seeded(seed) => Some(StdRng::seed_from_u64(seed)),
         };
 
-        for _epoch in 0..cfg.epochs {
+        for epoch in 0..cfg.epochs {
+            let epoch_lr = cfg.lr_schedule.lr_at_epoch(cfg.lr, epoch, cfg.epochs);
+            debug_assert!(epoch_lr.is_finite() && epoch_lr > 0.0);
+
             let mut epoch_loss = 0.0_f32;
             let mut metric_acc = MetricsAccum::new(self.output_dim(), &cfg.metrics)?;
 
@@ -182,7 +273,12 @@ impl Mlp {
                             metric_acc.update(pred, target)?;
 
                             self.backward(input, &trainer.scratch, &mut trainer.grads);
-                            opt.step(self, &trainer.grads);
+
+                            if let Some(max_norm) = cfg.grad_clip_norm {
+                                trainer.grads.clip_global_norm_params(max_norm);
+                            }
+                            self.apply_weight_decay(epoch_lr, cfg.weight_decay);
+                            opt_state.step(self, &mut trainer.grads, epoch_lr);
                         }
                     } else {
                         for batch in train.batches(cfg.batch_size) {
@@ -209,7 +305,12 @@ impl Mlp {
                             }
 
                             trainer.grads.scale_params(1.0 / batch.len() as f32);
-                            opt.step(self, &trainer.grads);
+
+                            if let Some(max_norm) = cfg.grad_clip_norm {
+                                trainer.grads.clip_global_norm_params(max_norm);
+                            }
+                            self.apply_weight_decay(epoch_lr, cfg.weight_decay);
+                            opt_state.step(self, &mut trainer.grads, epoch_lr);
                         }
                     }
                 }
@@ -232,7 +333,12 @@ impl Mlp {
                             metric_acc.update(pred, target)?;
 
                             self.backward(input, &trainer.scratch, &mut trainer.grads);
-                            opt.step(self, &trainer.grads);
+
+                            if let Some(max_norm) = cfg.grad_clip_norm {
+                                trainer.grads.clip_global_norm_params(max_norm);
+                            }
+                            self.apply_weight_decay(epoch_lr, cfg.weight_decay);
+                            opt_state.step(self, &mut trainer.grads, epoch_lr);
                         }
                     } else {
                         for batch in indices.chunks(cfg.batch_size) {
@@ -259,7 +365,12 @@ impl Mlp {
                             }
 
                             trainer.grads.scale_params(1.0 / batch.len() as f32);
-                            opt.step(self, &trainer.grads);
+
+                            if let Some(max_norm) = cfg.grad_clip_norm {
+                                trainer.grads.clip_global_norm_params(max_norm);
+                            }
+                            self.apply_weight_decay(epoch_lr, cfg.weight_decay);
+                            opt_state.step(self, &mut trainer.grads, epoch_lr);
                         }
                     }
                 }
@@ -618,6 +729,10 @@ mod tests {
             lr: 0.05,
             batch_size: 2,
             shuffle: Shuffle::Seeded(123),
+            lr_schedule: super::LrSchedule::Constant,
+            optimizer: crate::Optimizer::Sgd,
+            weight_decay: 0.0,
+            grad_clip_norm: None,
             loss: Loss::Mse,
             metrics: vec![],
         };

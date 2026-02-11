@@ -86,6 +86,11 @@ impl Mlp {
         self.layers.get(idx)
     }
 
+    #[inline]
+    pub(crate) fn layer_mut(&mut self, idx: usize) -> Option<&mut Layer> {
+        self.layers.get_mut(idx)
+    }
+
     /// Allocate a `Scratch` buffer suitable for this model.
     pub fn scratch(&self) -> Scratch {
         Scratch::new(self)
@@ -618,6 +623,28 @@ impl Mlp {
         }
     }
 
+    /// Apply decoupled weight decay to all layer weights.
+    ///
+    /// This updates weights only (biases are not decayed): `w -= lr * weight_decay * w`.
+    pub(crate) fn apply_weight_decay(&mut self, lr: f32, weight_decay: f32) {
+        assert!(
+            lr.is_finite() && lr > 0.0,
+            "learning rate must be finite and > 0"
+        );
+        assert!(
+            weight_decay.is_finite() && weight_decay >= 0.0,
+            "weight_decay must be finite and >= 0"
+        );
+
+        if weight_decay == 0.0 {
+            return;
+        }
+
+        for layer in &mut self.layers {
+            layer.apply_weight_decay(lr, weight_decay);
+        }
+    }
+
     /// Shape-safe, non-allocating inference for a single input.
     ///
     /// This validates shapes and returns `Result` instead of panicking.
@@ -811,10 +838,22 @@ impl Gradients {
         &self.d_weights[layer_idx]
     }
 
+    /// Mutable weight gradient for the given layer.
+    #[inline]
+    pub fn d_weights_mut(&mut self, layer_idx: usize) -> &mut [f32] {
+        &mut self.d_weights[layer_idx]
+    }
+
     /// Returns the bias gradient for the given layer (length `out_dim`).
     #[inline]
     pub fn d_biases(&self, layer_idx: usize) -> &[f32] {
         &self.d_biases[layer_idx]
+    }
+
+    /// Mutable bias gradient for the given layer.
+    #[inline]
+    pub fn d_biases_mut(&mut self, layer_idx: usize) -> &mut [f32] {
+        &mut self.d_biases[layer_idx]
     }
 
     /// Zero the parameter gradient buffers (`d_weights` and `d_biases`).
@@ -843,6 +882,38 @@ impl Gradients {
                 *v *= scale;
             }
         }
+    }
+
+    /// Compute the global L2 norm of parameter gradients.
+    pub fn global_l2_norm_params(&self) -> f32 {
+        let mut sum_sq = 0.0_f32;
+        for w in &self.d_weights {
+            for &v in w {
+                sum_sq = v.mul_add(v, sum_sq);
+            }
+        }
+        for b in &self.d_biases {
+            for &v in b {
+                sum_sq = v.mul_add(v, sum_sq);
+            }
+        }
+        sum_sq.sqrt()
+    }
+
+    /// Clip parameter gradients by global norm.
+    ///
+    /// Returns the pre-clip norm.
+    pub fn clip_global_norm_params(&mut self, max_norm: f32) -> f32 {
+        assert!(
+            max_norm.is_finite() && max_norm > 0.0,
+            "max_norm must be finite and > 0"
+        );
+
+        let norm = self.global_l2_norm_params();
+        if norm > max_norm && norm > 0.0 {
+            self.scale_params(max_norm / norm);
+        }
+        norm
     }
 }
 
