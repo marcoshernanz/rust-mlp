@@ -55,7 +55,8 @@ These methods treat shape mismatches as programmer error and will panic via `ass
 
 2) High-level convenience:
 
-- `Mlp::fit(&Dataset, FitConfig) -> Result<FitReport>`
+- `Mlp::fit(&Dataset, Option<&Dataset>, FitConfig) -> Result<FitReport>`
+- `Mlp::evaluate(&Dataset, Loss, &[Metric]) -> Result<EvalReport>`
 - `Mlp::predict(&Dataset) -> Result<Vec<f32>>`
 - `Mlp::predict_inputs(&Inputs) -> Result<Vec<f32>>`
 - `Mlp::evaluate_mse(&Dataset) -> Result<f32>`
@@ -65,7 +66,7 @@ These validate inputs and return `Result`.
 ## Example: train + evaluate
 
 ```rust
-use rust_mlp::{Activation, Dataset, FitConfig, MlpBuilder};
+use rust_mlp::{Activation, Dataset, FitConfig, Loss, Metric, MlpBuilder};
 
 fn main() -> rust_mlp::Result<()> {
     // XOR-ish tiny dataset (for demonstration).
@@ -86,14 +87,18 @@ fn main() -> rust_mlp::Result<()> {
 
     let report = mlp.fit(
         &train,
+        None,
         FitConfig {
             epochs: 200,
             lr: 0.1,
+            loss: Loss::Mse,
+            metrics: vec![Metric::Mse],
         },
     )?;
 
     let mse = mlp.evaluate_mse(&train)?;
-    println!("final train loss (from fit): {}", report.final_loss);
+    let last = report.epochs.last().unwrap();
+    println!("final train loss (from fit): {}", last.train.loss);
     println!("train MSE: {mse}");
     Ok(())
 }

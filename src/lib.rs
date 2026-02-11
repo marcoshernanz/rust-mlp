@@ -13,7 +13,7 @@
 //! # Quick start
 //!
 //! ```rust
-//! use rust_mlp::{Activation, FitConfig, MlpBuilder};
+//! use rust_mlp::{Activation, FitConfig, Loss, Metric, MlpBuilder};
 //!
 //! # fn main() -> rust_mlp::Result<()> {
 //! let xs = vec![
@@ -30,7 +30,16 @@
 //!     .add_layer(1, Activation::Sigmoid)?
 //!     .build_with_seed(0)?;
 //!
-//! let _report = mlp.fit(&train, FitConfig { epochs: 200, lr: 0.1 })?;
+//! let _report = mlp.fit(
+//!     &train,
+//!     None,
+//!     FitConfig {
+//!         epochs: 200,
+//!         lr: 0.1,
+//!         loss: Loss::Mse,
+//!         metrics: vec![Metric::Accuracy],
+//!     },
+//! )?;
 //! Ok(())
 //! # }
 //! ```
@@ -41,6 +50,7 @@ pub mod data;
 pub mod error;
 pub mod layer;
 pub mod loss;
+pub mod metrics;
 pub mod mlp;
 pub mod optim;
 pub mod train;
@@ -50,7 +60,9 @@ pub use builder::MlpBuilder;
 pub use data::{Dataset, Inputs};
 pub use error::{Error, Result};
 pub use layer::{Init, Layer};
+pub use loss::Loss;
+pub use metrics::Metric;
 pub use mlp::Trainer;
 pub use mlp::{Gradients, Mlp, Scratch};
 pub use optim::Sgd;
-pub use train::{FitConfig, FitReport};
+pub use train::{EpochReport, EvalReport, FitConfig, FitReport};

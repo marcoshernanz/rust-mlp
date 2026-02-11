@@ -41,9 +41,12 @@ fn main() {
     let report = mlp
         .fit(
             &train,
+            None,
             rust_mlp::FitConfig {
                 epochs: 200,
                 lr: 0.1,
+                loss: rust_mlp::Loss::Mse,
+                metrics: vec![],
             },
         )
         .unwrap();
@@ -52,6 +55,7 @@ fn main() {
     let _test_preds = mlp.predict_inputs(test.inputs()).unwrap();
     println!(
         "train_mse={:.6} test_mse={:.6}",
-        report.final_loss, test_mse
+        report.epochs.last().unwrap().train.loss,
+        test_mse
     );
 }

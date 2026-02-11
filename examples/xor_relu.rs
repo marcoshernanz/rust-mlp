@@ -1,4 +1,4 @@
-use rust_mlp::{Activation, Dataset, FitConfig, MlpBuilder};
+use rust_mlp::{Activation, Dataset, FitConfig, Loss, MlpBuilder};
 
 fn main() -> rust_mlp::Result<()> {
     // Classic XOR dataset.
@@ -20,17 +20,21 @@ fn main() -> rust_mlp::Result<()> {
 
     let report = mlp.fit(
         &train,
+        None,
         FitConfig {
             epochs: 2_000,
             lr: 0.1,
+            loss: Loss::Mse,
+            metrics: vec![],
         },
     )?;
 
     let mse = mlp.evaluate_mse(&train)?;
-    println!(
-        "final_loss_from_fit={} train_mse={}",
-        report.final_loss, mse
-    );
+    let last = report
+        .epochs
+        .last()
+        .expect("fit must report at least 1 epoch");
+    println!("final_loss_from_fit={} train_mse={}", last.train.loss, mse);
 
     let mut scratch = mlp.scratch();
     let mut out = [0.0_f32; 1];

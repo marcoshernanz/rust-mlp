@@ -68,6 +68,14 @@ impl Mlp {
         self.layers.len()
     }
 
+    /// Returns a reference to a layer by index.
+    ///
+    /// This is primarily useful for inspection and debugging.
+    #[inline]
+    pub fn layer(&self, idx: usize) -> Option<&Layer> {
+        self.layers.get(idx)
+    }
+
     /// Allocate a `Scratch` buffer suitable for this model.
     pub fn scratch(&self) -> Scratch {
         Scratch::new(self)
@@ -421,14 +429,14 @@ impl Gradients {
         &self.d_input
     }
 
-    #[inline]
     /// Returns the weight gradient for the given layer (row-major `(out_dim, in_dim)`).
+    #[inline]
     pub fn d_weights(&self, layer_idx: usize) -> &[f32] {
         &self.d_weights[layer_idx]
     }
 
-    #[inline]
     /// Returns the bias gradient for the given layer (length `out_dim`).
+    #[inline]
     pub fn d_biases(&self, layer_idx: usize) -> &[f32] {
         &self.d_biases[layer_idx]
     }
