@@ -40,6 +40,8 @@ fn main() -> rust_mlp::Result<()> {
         FitConfig {
             epochs: 200,
             lr: 0.05,
+            batch_size: 32,
+            shuffle: rust_mlp::Shuffle::Seeded(0),
             loss: Loss::SoftmaxCrossEntropy,
             metrics: vec![Metric::Accuracy, Metric::TopKAccuracy { k: 2 }],
         },

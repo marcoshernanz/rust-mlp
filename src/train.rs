@@ -5,11 +5,27 @@
 
 use crate::{Activation, Dataset, Error, Layer, Loss, Metric, Mlp, Result, Sgd, Trainer, loss};
 
+use rand::SeedableRng;
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Training data shuffling strategy.
+pub enum Shuffle {
+    /// Keep samples in dataset order.
+    #[default]
+    None,
+    /// Shuffle each epoch using a deterministic RNG seed.
+    Seeded(u64),
+}
+
 #[derive(Debug, Clone)]
 /// Configuration for `Mlp::fit`.
 pub struct FitConfig {
     pub epochs: usize,
     pub lr: f32,
+    pub batch_size: usize,
+    pub shuffle: Shuffle,
     pub loss: Loss,
     pub metrics: Vec<Metric>,
 }
@@ -19,6 +35,8 @@ impl Default for FitConfig {
         Self {
             epochs: 10,
             lr: 1e-2,
+            batch_size: 1,
+            shuffle: Shuffle::None,
             loss: Loss::Mse,
             metrics: Vec::new(),
         }
@@ -124,30 +142,127 @@ impl Mlp {
         if !(cfg.lr.is_finite() && cfg.lr > 0.0) {
             return Err(Error::InvalidConfig("lr must be finite and > 0".to_owned()));
         }
+        if cfg.batch_size == 0 {
+            return Err(Error::InvalidConfig("batch_size must be > 0".to_owned()));
+        }
 
         let opt = Sgd::new(cfg.lr)?;
         let mut trainer = Trainer::new(self);
         let mut reports = Vec::with_capacity(cfg.epochs);
 
+        // Only allocate an indices buffer if we need shuffling.
+        let mut indices: Vec<usize> = match cfg.shuffle {
+            Shuffle::None => Vec::new(),
+            Shuffle::Seeded(_) => (0..train.len()).collect(),
+        };
+
+        let mut rng = match cfg.shuffle {
+            Shuffle::None => None,
+            Shuffle::Seeded(seed) => Some(StdRng::seed_from_u64(seed)),
+        };
+
         for _epoch in 0..cfg.epochs {
             let mut epoch_loss = 0.0_f32;
             let mut metric_acc = MetricsAccum::new(self.output_dim(), &cfg.metrics)?;
 
-            for idx in 0..train.len() {
-                let input = train.input(idx);
-                let target = train.target(idx);
+            match cfg.shuffle {
+                Shuffle::None => {
+                    if cfg.batch_size == 1 {
+                        for idx in 0..train.len() {
+                            let input = train.input(idx);
+                            let target = train.target(idx);
 
-                self.forward(input, &mut trainer.scratch);
-                let pred = trainer.scratch.output();
+                            self.forward(input, &mut trainer.scratch);
+                            let pred = trainer.scratch.output();
 
-                let loss_val = cfg
-                    .loss
-                    .backward(pred, target, trainer.grads.d_output_mut());
-                epoch_loss += loss_val;
-                metric_acc.update(pred, target)?;
+                            let loss_val =
+                                cfg.loss
+                                    .backward(pred, target, trainer.grads.d_output_mut());
+                            epoch_loss += loss_val;
+                            metric_acc.update(pred, target)?;
 
-                self.backward(input, &trainer.scratch, &mut trainer.grads);
-                opt.step(self, &trainer.grads);
+                            self.backward(input, &trainer.scratch, &mut trainer.grads);
+                            opt.step(self, &trainer.grads);
+                        }
+                    } else {
+                        for batch in train.batches(cfg.batch_size) {
+                            trainer.grads.zero_params();
+
+                            for b in 0..batch.len() {
+                                let input = batch.input(b);
+                                let target = batch.target(b);
+
+                                self.forward(input, &mut trainer.scratch);
+                                let pred = trainer.scratch.output();
+
+                                let loss_val =
+                                    cfg.loss
+                                        .backward(pred, target, trainer.grads.d_output_mut());
+                                epoch_loss += loss_val;
+                                metric_acc.update(pred, target)?;
+
+                                self.backward_accumulate(
+                                    input,
+                                    &trainer.scratch,
+                                    &mut trainer.grads,
+                                );
+                            }
+
+                            trainer.grads.scale_params(1.0 / batch.len() as f32);
+                            opt.step(self, &trainer.grads);
+                        }
+                    }
+                }
+                Shuffle::Seeded(_) => {
+                    let rng = rng.as_mut().expect("rng must be initialized for shuffling");
+                    indices.shuffle(rng);
+
+                    if cfg.batch_size == 1 {
+                        for &idx in &indices {
+                            let input = train.input(idx);
+                            let target = train.target(idx);
+
+                            self.forward(input, &mut trainer.scratch);
+                            let pred = trainer.scratch.output();
+
+                            let loss_val =
+                                cfg.loss
+                                    .backward(pred, target, trainer.grads.d_output_mut());
+                            epoch_loss += loss_val;
+                            metric_acc.update(pred, target)?;
+
+                            self.backward(input, &trainer.scratch, &mut trainer.grads);
+                            opt.step(self, &trainer.grads);
+                        }
+                    } else {
+                        for batch in indices.chunks(cfg.batch_size) {
+                            trainer.grads.zero_params();
+
+                            for &idx in batch {
+                                let input = train.input(idx);
+                                let target = train.target(idx);
+
+                                self.forward(input, &mut trainer.scratch);
+                                let pred = trainer.scratch.output();
+
+                                let loss_val =
+                                    cfg.loss
+                                        .backward(pred, target, trainer.grads.d_output_mut());
+                                epoch_loss += loss_val;
+                                metric_acc.update(pred, target)?;
+
+                                self.backward_accumulate(
+                                    input,
+                                    &trainer.scratch,
+                                    &mut trainer.grads,
+                                );
+                            }
+
+                            trainer.grads.scale_params(1.0 / batch.len() as f32);
+                            opt.step(self, &trainer.grads);
+                        }
+                    }
+                }
             }
 
             let inv_n = 1.0 / train.len() as f32;
@@ -449,6 +564,8 @@ fn argmax(xs: &[f32]) -> usize {
 mod tests {
     use crate::{Activation, Dataset, Loss, Metric, MlpBuilder};
 
+    use super::Shuffle;
+
     #[test]
     fn evaluate_computes_accuracy_for_multiclass_one_hot() {
         // Make a tiny dataset where the model is forced to output logits we can control.
@@ -471,5 +588,45 @@ mod tests {
             .evaluate(&data, Loss::SoftmaxCrossEntropy, &[Metric::Accuracy])
             .unwrap();
         assert_eq!(report.metrics.len(), 1);
+    }
+
+    #[test]
+    fn shuffle_seeded_is_deterministic() {
+        let mut a = MlpBuilder::new(2)
+            .unwrap()
+            .add_layer(4, Activation::Tanh)
+            .unwrap()
+            .add_layer(1, Activation::Identity)
+            .unwrap()
+            .build_with_seed(0)
+            .unwrap();
+        let mut b = a.clone();
+
+        // Tiny regression dataset.
+        let xs = vec![
+            vec![0.0, 0.0],
+            vec![0.0, 1.0],
+            vec![1.0, 0.0],
+            vec![1.0, 1.0],
+            vec![2.0, 0.0],
+        ];
+        let ys = vec![vec![0.0], vec![1.0], vec![1.0], vec![2.0], vec![2.0]];
+        let train = Dataset::from_rows(&xs, &ys).unwrap();
+
+        let cfg = super::FitConfig {
+            epochs: 10,
+            lr: 0.05,
+            batch_size: 2,
+            shuffle: Shuffle::Seeded(123),
+            loss: Loss::Mse,
+            metrics: vec![],
+        };
+
+        let rep_a = a.fit(&train, None, cfg.clone()).unwrap();
+        let rep_b = b.fit(&train, None, cfg).unwrap();
+
+        let last_a = rep_a.epochs.last().unwrap().train.loss;
+        let last_b = rep_b.epochs.last().unwrap().train.loss;
+        assert_eq!(last_a.to_bits(), last_b.to_bits());
     }
 }

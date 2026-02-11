@@ -250,6 +250,93 @@ impl Layer {
         }
     }
 
+    /// Backward pass for a single sample (parameter accumulation semantics).
+    ///
+    /// This is identical to `backward` except that parameter gradients are *accumulated*:
+    /// - `d_inputs` is overwritten (and internally zeroed before accumulation)
+    /// - `d_weights` is accumulated into (`+=`)
+    /// - `d_biases` is accumulated into (`+=`)
+    ///
+    /// This is useful for mini-batch training where you sum gradients over multiple samples.
+    ///
+    /// Shape contract:
+    /// - `inputs.len() == self.in_dim`
+    /// - `outputs.len() == self.out_dim`
+    /// - `d_outputs.len() == self.out_dim`
+    /// - `d_inputs.len() == self.in_dim`
+    /// - `d_weights.len() == self.weights.len()`
+    /// - `d_biases.len() == self.out_dim`
+    #[inline]
+    pub fn backward_accumulate(
+        &self,
+        inputs: &[f32],
+        outputs: &[f32],
+        d_outputs: &[f32],
+        d_inputs: &mut [f32],
+        d_weights: &mut [f32],
+        d_biases: &mut [f32],
+    ) {
+        assert_eq!(
+            inputs.len(),
+            self.in_dim,
+            "inputs len {} does not match layer in_dim {}",
+            inputs.len(),
+            self.in_dim
+        );
+        assert_eq!(
+            outputs.len(),
+            self.out_dim,
+            "outputs len {} does not match layer out_dim {}",
+            outputs.len(),
+            self.out_dim
+        );
+        assert_eq!(
+            d_outputs.len(),
+            self.out_dim,
+            "d_outputs len {} does not match layer out_dim {}",
+            d_outputs.len(),
+            self.out_dim
+        );
+        assert_eq!(
+            d_inputs.len(),
+            self.in_dim,
+            "d_inputs len {} does not match layer in_dim {}",
+            d_inputs.len(),
+            self.in_dim
+        );
+        assert_eq!(
+            d_weights.len(),
+            self.weights.len(),
+            "d_weights len {} does not match weights len {}",
+            d_weights.len(),
+            self.weights.len()
+        );
+        assert_eq!(
+            d_biases.len(),
+            self.out_dim,
+            "d_biases len {} does not match layer out_dim {}",
+            d_biases.len(),
+            self.out_dim
+        );
+
+        // d_inputs accumulates contributions from all outputs.
+        d_inputs.fill(0.0);
+
+        let activation = self.activation;
+
+        for o in 0..self.out_dim {
+            let d_z = d_outputs[o] * activation.grad_from_output(outputs[o]);
+            d_biases[o] += d_z;
+
+            let row = o * self.in_dim;
+            for i in 0..self.in_dim {
+                let w = self.weights[row + i];
+                d_weights[row + i] += d_z * inputs[i];
+                d_inputs[i] = w.mul_add(d_z, d_inputs[i]);
+            }
+        }
+    }
+
     /// Applies an SGD update: `param -= lr * d_param`.
     ///
     /// Shape contract:

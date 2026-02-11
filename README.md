@@ -91,6 +91,8 @@ fn main() -> rust_mlp::Result<()> {
         FitConfig {
             epochs: 200,
             lr: 0.1,
+            batch_size: 4,
+            shuffle: rust_mlp::Shuffle::Seeded(0),
             loss: Loss::Mse,
             metrics: vec![Metric::Mse],
         },

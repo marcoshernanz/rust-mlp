@@ -36,6 +36,8 @@
 //!     FitConfig {
 //!         epochs: 200,
 //!         lr: 0.1,
+//!         batch_size: 4,
+//!         shuffle: rust_mlp::Shuffle::Seeded(0),
 //!         loss: Loss::Mse,
 //!         metrics: vec![Metric::Accuracy],
 //!     },
@@ -63,6 +65,7 @@ pub use layer::{Init, Layer};
 pub use loss::Loss;
 pub use metrics::Metric;
 pub use mlp::Trainer;
-pub use mlp::{Gradients, Mlp, Scratch};
+pub use mlp::{BatchScratch, Gradients, Mlp, Scratch};
 pub use optim::Sgd;
+pub use train::Shuffle;
 pub use train::{EpochReport, EvalReport, FitConfig, FitReport};
