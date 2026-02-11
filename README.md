@@ -154,3 +154,11 @@ fn main() -> rust_mlp::Result<()> {
 ## Roadmap
 
 See `ROADMAP.md` for the production-readiness plan.
+
+## Serialization (feature: `serde`)
+
+Enable the feature and use `save_json` / `load_json`:
+
+```bash
+cargo run --example save_load_json --features serde
+```

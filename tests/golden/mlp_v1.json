@@ -1,0 +1,40 @@
+{
+  "format_version": 1,
+  "layers": [
+    {
+      "in_dim": 2,
+      "out_dim": 3,
+      "activation": {
+        "kind": "tanh"
+      },
+      "weights": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0
+      ],
+      "biases": [
+        0.1,
+        0.2,
+        0.3
+      ]
+    },
+    {
+      "in_dim": 3,
+      "out_dim": 1,
+      "activation": {
+        "kind": "identity"
+      },
+      "weights": [
+        7.0,
+        8.0,
+        9.0
+      ],
+      "biases": [
+        0.4
+      ]
+    }
+  ]
+}

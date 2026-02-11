@@ -52,6 +52,66 @@ impl Layer {
 }
 
 impl Layer {
+    /// Construct a layer from explicit parameter buffers.
+    ///
+    /// This is primarily intended for model loading/serialization.
+    #[cfg(feature = "serde")]
+    pub(crate) fn from_parts(
+        in_dim: usize,
+        out_dim: usize,
+        activation: Activation,
+        weights: Vec<f32>,
+        biases: Vec<f32>,
+    ) -> Result<Self> {
+        if in_dim == 0 || out_dim == 0 {
+            return Err(Error::InvalidData(format!(
+                "layer dims must be > 0, got in_dim={in_dim} out_dim={out_dim}"
+            )));
+        }
+
+        activation
+            .validate()
+            .map_err(|e| Error::InvalidData(format!("invalid activation: {e}")))?;
+
+        let expected_w = in_dim
+            .checked_mul(out_dim)
+            .ok_or_else(|| Error::InvalidData("layer weight shape overflow".to_owned()))?;
+        if weights.len() != expected_w {
+            return Err(Error::InvalidData(format!(
+                "weights length {} does not match out_dim * in_dim ({} * {})",
+                weights.len(),
+                out_dim,
+                in_dim
+            )));
+        }
+        if biases.len() != out_dim {
+            return Err(Error::InvalidData(format!(
+                "biases length {} does not match out_dim {}",
+                biases.len(),
+                out_dim
+            )));
+        }
+
+        if weights.iter().any(|v| !v.is_finite()) {
+            return Err(Error::InvalidData(
+                "weights must contain only finite values".to_owned(),
+            ));
+        }
+        if biases.iter().any(|v| !v.is_finite()) {
+            return Err(Error::InvalidData(
+                "biases must contain only finite values".to_owned(),
+            ));
+        }
+
+        Ok(Self {
+            in_dim,
+            out_dim,
+            activation,
+            weights,
+            biases,
+        })
+    }
+
     pub fn new_with_rng<R: Rng + ?Sized>(
         in_dim: usize,
         out_dim: usize,
@@ -108,6 +168,18 @@ impl Layer {
     /// Returns the output dimension.
     pub fn out_dim(&self) -> usize {
         self.out_dim
+    }
+
+    #[inline]
+    #[cfg(feature = "serde")]
+    pub(crate) fn weights(&self) -> &[f32] {
+        &self.weights
+    }
+
+    #[inline]
+    #[cfg(feature = "serde")]
+    pub(crate) fn biases(&self) -> &[f32] {
+        &self.biases
     }
 
     #[inline]

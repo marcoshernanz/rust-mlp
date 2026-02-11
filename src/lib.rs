@@ -65,6 +65,9 @@ pub mod mlp;
 pub mod optim;
 pub mod train;
 
+#[cfg(feature = "serde")]
+pub mod serde_model;
+
 pub use activation::Activation;
 pub use builder::MlpBuilder;
 pub use data::{Dataset, Inputs};

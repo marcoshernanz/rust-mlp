@@ -5,6 +5,13 @@ edition = "2024"
 
 [dependencies]
 rand = "0.8"
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+
+[features]
+default = []
+# Enable JSON serialization/deserialization support.
+serde = ["dep:serde", "dep:serde_json"]
 
 [dev-dependencies]
 criterion = "0.5"
