@@ -7,11 +7,14 @@ edition = "2024"
 rand = "0.8"
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
+matrixmultiply = { version = "0.3", optional = true }
 
 [features]
 default = []
 # Enable JSON serialization/deserialization support.
 serde = ["dep:serde", "dep:serde_json"]
+# Use the `matrixmultiply` crate for faster batched GEMM.
+matrixmultiply = ["dep:matrixmultiply"]
 
 [dev-dependencies]
 criterion = "0.5"

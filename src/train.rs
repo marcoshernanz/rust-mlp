@@ -236,6 +236,29 @@ impl Mlp {
 
         let mut opt_state: OptimizerState = cfg.optimizer.state(self)?;
         let mut trainer = Trainer::new(self);
+        let mut batch_scratch = if cfg.batch_size > 1 {
+            Some(self.scratch_batch(cfg.batch_size))
+        } else {
+            None
+        };
+        let mut batch_backprop = if cfg.batch_size > 1 {
+            Some(self.backprop_scratch_batch(cfg.batch_size))
+        } else {
+            None
+        };
+        let mut d_outputs_batch = if cfg.batch_size > 1 {
+            Some(vec![0.0_f32; cfg.batch_size * self.output_dim()])
+        } else {
+            None
+        };
+        let mut gather_inputs = if cfg.batch_size > 1 {
+            match cfg.shuffle {
+                Shuffle::None => None,
+                Shuffle::Seeded(_) => Some(vec![0.0_f32; cfg.batch_size * self.input_dim()]),
+            }
+        } else {
+            None
+        };
         let mut reports = Vec::with_capacity(cfg.epochs);
 
         // Only allocate an indices buffer if we need shuffling.
@@ -282,29 +305,62 @@ impl Mlp {
                         }
                     } else {
                         for batch in train.batches(cfg.batch_size) {
-                            trainer.grads.zero_params();
+                            // Batched fast path for full-size batches.
+                            if batch.len() == cfg.batch_size {
+                                let bs = batch_scratch.as_mut().expect("batch_scratch must exist");
+                                let bb =
+                                    batch_backprop.as_mut().expect("batch_backprop must exist");
+                                let d_out = d_outputs_batch
+                                    .as_mut()
+                                    .expect("d_outputs_batch must exist");
 
-                            for b in 0..batch.len() {
-                                let input = batch.input(b);
-                                let target = batch.target(b);
+                                self.forward_batch(batch.inputs_flat(), bs);
+                                let preds = bs.output();
 
-                                self.forward(input, &mut trainer.scratch);
-                                let pred = trainer.scratch.output();
+                                for b in 0..batch.len() {
+                                    let pred =
+                                        &preds[b * self.output_dim()..(b + 1) * self.output_dim()];
+                                    let target = batch.target(b);
+                                    let d_slice = &mut d_out
+                                        [b * self.output_dim()..(b + 1) * self.output_dim()];
+                                    let loss_val = cfg.loss.backward(pred, target, d_slice);
+                                    epoch_loss += loss_val;
+                                    metric_acc.update(pred, target)?;
+                                }
 
-                                let loss_val =
-                                    cfg.loss
-                                        .backward(pred, target, trainer.grads.d_output_mut());
-                                epoch_loss += loss_val;
-                                metric_acc.update(pred, target)?;
-
-                                self.backward_accumulate(
-                                    input,
-                                    &trainer.scratch,
+                                self.backward_batch(
+                                    batch.inputs_flat(),
+                                    bs,
+                                    d_out,
                                     &mut trainer.grads,
+                                    bb,
                                 );
-                            }
+                            } else {
+                                // Remainder batch: fall back to per-sample accumulation.
+                                trainer.grads.zero_params();
+                                for b in 0..batch.len() {
+                                    let input = batch.input(b);
+                                    let target = batch.target(b);
 
-                            trainer.grads.scale_params(1.0 / batch.len() as f32);
+                                    self.forward(input, &mut trainer.scratch);
+                                    let pred = trainer.scratch.output();
+
+                                    let loss_val = cfg.loss.backward(
+                                        pred,
+                                        target,
+                                        trainer.grads.d_output_mut(),
+                                    );
+                                    epoch_loss += loss_val;
+                                    metric_acc.update(pred, target)?;
+
+                                    self.backward_accumulate(
+                                        input,
+                                        &trainer.scratch,
+                                        &mut trainer.grads,
+                                    );
+                                }
+                                trainer.grads.scale_params(1.0 / batch.len() as f32);
+                            }
 
                             if let Some(max_norm) = cfg.grad_clip_norm {
                                 trainer.grads.clip_global_norm_params(max_norm);
@@ -342,29 +398,71 @@ impl Mlp {
                         }
                     } else {
                         for batch in indices.chunks(cfg.batch_size) {
-                            trainer.grads.zero_params();
+                            // Batched fast path for full-size batches: gather inputs into a
+                            // contiguous buffer, then run GEMM-based forward/backward.
+                            if batch.len() == cfg.batch_size {
+                                let bs = batch_scratch.as_mut().expect("batch_scratch must exist");
+                                let bb =
+                                    batch_backprop.as_mut().expect("batch_backprop must exist");
+                                let d_out = d_outputs_batch
+                                    .as_mut()
+                                    .expect("d_outputs_batch must exist");
+                                let x_gather =
+                                    gather_inputs.as_mut().expect("gather_inputs must exist");
 
-                            for &idx in batch {
-                                let input = train.input(idx);
-                                let target = train.target(idx);
+                                let in_dim = self.input_dim();
+                                let out_dim = self.output_dim();
+                                debug_assert_eq!(x_gather.len(), cfg.batch_size * in_dim);
+                                debug_assert_eq!(d_out.len(), cfg.batch_size * out_dim);
 
-                                self.forward(input, &mut trainer.scratch);
-                                let pred = trainer.scratch.output();
+                                for (b, &idx) in batch.iter().enumerate() {
+                                    let x = train.input(idx);
+                                    let x0 = b * in_dim;
+                                    x_gather[x0..x0 + in_dim].copy_from_slice(x);
+                                }
 
-                                let loss_val =
-                                    cfg.loss
-                                        .backward(pred, target, trainer.grads.d_output_mut());
-                                epoch_loss += loss_val;
-                                metric_acc.update(pred, target)?;
+                                self.forward_batch(x_gather, bs);
+                                let preds = bs.output();
 
-                                self.backward_accumulate(
-                                    input,
-                                    &trainer.scratch,
-                                    &mut trainer.grads,
-                                );
+                                for (b, &idx) in batch.iter().enumerate() {
+                                    let pred = &preds[b * out_dim..(b + 1) * out_dim];
+                                    let target = train.target(idx);
+                                    let d_slice = &mut d_out[b * out_dim..(b + 1) * out_dim];
+
+                                    let loss_val = cfg.loss.backward(pred, target, d_slice);
+                                    epoch_loss += loss_val;
+                                    metric_acc.update(pred, target)?;
+                                }
+
+                                self.backward_batch(x_gather, bs, d_out, &mut trainer.grads, bb);
+                            } else {
+                                // Remainder batch: fall back to per-sample accumulation.
+                                trainer.grads.zero_params();
+
+                                for &idx in batch {
+                                    let input = train.input(idx);
+                                    let target = train.target(idx);
+
+                                    self.forward(input, &mut trainer.scratch);
+                                    let pred = trainer.scratch.output();
+
+                                    let loss_val = cfg.loss.backward(
+                                        pred,
+                                        target,
+                                        trainer.grads.d_output_mut(),
+                                    );
+                                    epoch_loss += loss_val;
+                                    metric_acc.update(pred, target)?;
+
+                                    self.backward_accumulate(
+                                        input,
+                                        &trainer.scratch,
+                                        &mut trainer.grads,
+                                    );
+                                }
+
+                                trainer.grads.scale_params(1.0 / batch.len() as f32);
                             }
-
-                            trainer.grads.scale_params(1.0 / batch.len() as f32);
 
                             if let Some(max_norm) = cfg.grad_clip_norm {
                                 trainer.grads.clip_global_norm_params(max_norm);

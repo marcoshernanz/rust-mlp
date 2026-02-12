@@ -142,6 +142,17 @@ fn main() -> rust_mlp::Result<()> {
 - `Dataset`/`Inputs` store data contiguously (row-major) to keep slice access cheap.
 - Training (`fit`) allocates buffers once and reuses them across all steps.
 
+### Batched training
+
+When `FitConfig.batch_size > 1`, `fit` uses a batched GEMM-based path for full-size batches.
+
+Optional faster matmul backend:
+
+```bash
+cargo test --all-features
+cargo bench --features matrixmultiply
+```
+
 ## Determinism
 
 - Use `MlpBuilder::build_with_seed` for deterministic initialization.

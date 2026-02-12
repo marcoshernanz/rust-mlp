@@ -33,6 +33,38 @@ pub struct BatchScratch {
     layer_outputs: Vec<Vec<f32>>,
 }
 
+/// Reusable buffers for `Mlp::backward_batch`.
+///
+/// This stores two work buffers sized for the maximum layer dimension.
+#[derive(Debug, Clone)]
+pub struct BatchBackpropScratch {
+    batch_size: usize,
+    max_dim: usize,
+    buf0: Vec<f32>,
+    buf1: Vec<f32>,
+}
+
+impl BatchBackpropScratch {
+    /// Allocate a backprop scratch buffer suitable for `mlp` and `batch_size`.
+    pub fn new(mlp: &Mlp, batch_size: usize) -> Self {
+        assert!(batch_size > 0, "batch_size must be > 0");
+
+        let mut max_dim = mlp.input_dim();
+        for layer in &mlp.layers {
+            max_dim = max_dim.max(layer.in_dim());
+            max_dim = max_dim.max(layer.out_dim());
+        }
+
+        let len = batch_size * max_dim;
+        Self {
+            batch_size,
+            max_dim,
+            buf0: vec![0.0; len],
+            buf1: vec![0.0; len],
+        }
+    }
+}
+
 /// Parameter gradients for an `Mlp` (overwrite semantics).
 ///
 /// Allocate once via `Mlp::gradients()` and reuse across training steps.
@@ -99,6 +131,11 @@ impl Mlp {
     /// Allocate a `BatchScratch` buffer suitable for this model and a fixed batch size.
     pub fn scratch_batch(&self, batch_size: usize) -> BatchScratch {
         BatchScratch::new(self, batch_size)
+    }
+
+    /// Allocate a `BatchBackpropScratch` buffer suitable for this model and a fixed batch size.
+    pub fn backprop_scratch_batch(&self, batch_size: usize) -> BatchBackpropScratch {
+        BatchBackpropScratch::new(self, batch_size)
     }
 
     /// Allocate a `Gradients` buffer suitable for this model.
@@ -194,6 +231,7 @@ impl Mlp {
 
         for (idx, layer) in self.layers.iter().enumerate() {
             let out_dim = layer.out_dim();
+            let in_dim = layer.in_dim();
 
             if idx == 0 {
                 let out = &mut scratch.layer_outputs[0];
@@ -206,12 +244,35 @@ impl Mlp {
                     out_dim
                 );
 
-                for b in 0..batch_size {
-                    let x0 = b * self.input_dim();
-                    let x = &inputs[x0..x0 + self.input_dim()];
-                    let y0 = b * out_dim;
-                    let y = &mut out[y0..y0 + out_dim];
-                    layer.forward(x, y);
+                // out = inputs * weights^T
+                // inputs: (batch_size, in_dim) row-major
+                // weights: (out_dim, in_dim) row-major, so weights^T is represented by strides.
+                crate::matmul::gemm_f32(
+                    batch_size,
+                    out_dim,
+                    in_dim,
+                    1.0,
+                    inputs,
+                    in_dim,
+                    1,
+                    layer.weights(),
+                    1,
+                    in_dim,
+                    0.0,
+                    out,
+                    out_dim,
+                    1,
+                );
+
+                let activation = layer.activation();
+                let b = layer.biases();
+                debug_assert_eq!(b.len(), out_dim);
+                for row in 0..batch_size {
+                    let o0 = row * out_dim;
+                    for o in 0..out_dim {
+                        let z = out[o0 + o] + b[o];
+                        out[o0 + o] = activation.forward(z);
+                    }
                 }
             } else {
                 // Borrow the previous output immutably and the current output mutably.
@@ -219,7 +280,6 @@ impl Mlp {
                 let prev = &left[idx - 1];
                 let out = &mut right[0];
 
-                let in_dim = layer.in_dim();
                 assert_eq!(
                     prev.len(),
                     batch_size * in_dim,
@@ -238,12 +298,32 @@ impl Mlp {
                     out_dim
                 );
 
-                for b in 0..batch_size {
-                    let x0 = b * in_dim;
-                    let x = &prev[x0..x0 + in_dim];
-                    let y0 = b * out_dim;
-                    let y = &mut out[y0..y0 + out_dim];
-                    layer.forward(x, y);
+                crate::matmul::gemm_f32(
+                    batch_size,
+                    out_dim,
+                    in_dim,
+                    1.0,
+                    prev,
+                    in_dim,
+                    1,
+                    layer.weights(),
+                    1,
+                    in_dim,
+                    0.0,
+                    out,
+                    out_dim,
+                    1,
+                );
+
+                let activation = layer.activation();
+                let b = layer.biases();
+                debug_assert_eq!(b.len(), out_dim);
+                for row in 0..batch_size {
+                    let o0 = row * out_dim;
+                    for o in 0..out_dim {
+                        let z = out[o0 + o] + b[o];
+                        out[o0 + o] = activation.forward(z);
+                    }
                 }
             }
         }
@@ -500,9 +580,15 @@ impl Mlp {
         scratch: &BatchScratch,
         d_outputs: &[f32],
         grads: &mut Gradients,
+        backprop_scratch: &mut BatchBackpropScratch,
     ) {
         let batch_size = scratch.batch_size;
         assert!(batch_size > 0, "batch_size must be > 0");
+        assert_eq!(
+            backprop_scratch.batch_size, batch_size,
+            "backprop scratch batch_size {} does not match scratch batch_size {}",
+            backprop_scratch.batch_size, batch_size
+        );
         assert_eq!(
             inputs.len(),
             batch_size * self.input_dim(),
@@ -538,62 +624,110 @@ impl Mlp {
             );
         }
 
-        grads.zero_params();
-
-        let out_dim = self.output_dim();
-        let in_dim0 = self.input_dim();
-
-        for b in 0..batch_size {
-            let dy0 = b * out_dim;
-            grads
-                .d_output_mut()
-                .copy_from_slice(&d_outputs[dy0..dy0 + out_dim]);
-
-            let x0 = b * in_dim0;
-            let input = &inputs[x0..x0 + in_dim0];
-
-            for idx in (0..self.layers.len()).rev() {
-                let layer = &self.layers[idx];
-
-                let layer_input: &[f32] = if idx == 0 {
-                    input
-                } else {
-                    let in_dim = layer.in_dim();
-                    let start = b * in_dim;
-                    &scratch.layer_outputs[idx - 1][start..start + in_dim]
-                };
-
-                let out_dim = layer.out_dim();
-                let start = b * out_dim;
-                let layer_output: &[f32] = &scratch.layer_outputs[idx][start..start + out_dim];
-
-                if idx == 0 {
-                    let d_outputs = &grads.d_layer_outputs[0];
-                    layer.backward_accumulate(
-                        layer_input,
-                        layer_output,
-                        d_outputs,
-                        &mut grads.d_input,
-                        &mut grads.d_weights[0],
-                        &mut grads.d_biases[0],
-                    );
-                } else {
-                    let (left, right) = grads.d_layer_outputs.split_at_mut(idx);
-                    let d_inputs_prev = &mut left[idx - 1];
-                    let d_outputs = &right[0];
-                    layer.backward_accumulate(
-                        layer_input,
-                        layer_output,
-                        d_outputs,
-                        d_inputs_prev,
-                        &mut grads.d_weights[idx],
-                        &mut grads.d_biases[idx],
-                    );
-                }
-            }
+        // Overwrite semantics.
+        for (idx, layer) in self.layers.iter().enumerate() {
+            let out_dim = layer.out_dim();
+            let in_dim = layer.in_dim();
+            grads.d_weights[idx].fill(0.0);
+            grads.d_biases[idx].fill(0.0);
+            debug_assert_eq!(grads.d_weights[idx].len(), out_dim * in_dim);
+            debug_assert_eq!(grads.d_biases[idx].len(), out_dim);
         }
 
-        grads.scale_params(1.0 / batch_size as f32);
+        // Ensure work buffers are large enough.
+        let needed = batch_size * backprop_scratch.max_dim;
+        assert!(
+            backprop_scratch.buf0.len() >= needed && backprop_scratch.buf1.len() >= needed,
+            "backprop scratch buffers are too small"
+        );
+
+        let inv_batch = 1.0 / batch_size as f32;
+
+        // d_cur holds dL/dy for the current layer output, then overwritten to dL/dz.
+        let mut cur_dim = self.output_dim();
+        let cur_len = batch_size * cur_dim;
+        backprop_scratch.buf0[..cur_len].copy_from_slice(d_outputs);
+        let mut cur_in_buf0 = true;
+
+        for idx in (0..self.layers.len()).rev() {
+            let layer = &self.layers[idx];
+            let out_dim = layer.out_dim();
+            let in_dim = layer.in_dim();
+
+            debug_assert_eq!(cur_dim, out_dim);
+
+            let (cur_buf, other_buf) = if cur_in_buf0 {
+                (&mut backprop_scratch.buf0, &mut backprop_scratch.buf1)
+            } else {
+                (&mut backprop_scratch.buf1, &mut backprop_scratch.buf0)
+            };
+
+            let d_cur: &mut [f32] = &mut cur_buf[..batch_size * out_dim];
+
+            let y = &scratch.layer_outputs[idx];
+            debug_assert_eq!(y.len(), batch_size * out_dim);
+
+            // dZ = dY * activation'(y)
+            let activation = layer.activation();
+            for i in 0..d_cur.len() {
+                d_cur[i] *= activation.grad_from_output(y[i]);
+            }
+
+            // db = mean over batch of dZ
+            let db = &mut grads.d_biases[idx];
+            assert_eq!(db.len(), out_dim);
+            db.fill(0.0);
+            for b in 0..batch_size {
+                let row0 = b * out_dim;
+                for o in 0..out_dim {
+                    db[o] += d_cur[row0 + o];
+                }
+            }
+            for v in db.iter_mut() {
+                *v *= inv_batch;
+            }
+
+            // dW = mean over batch of dZ^T * X
+            let x: &[f32] = if idx == 0 {
+                inputs
+            } else {
+                &scratch.layer_outputs[idx - 1]
+            };
+            assert_eq!(x.len(), batch_size * in_dim);
+
+            let dw = &mut grads.d_weights[idx];
+            assert_eq!(dw.len(), out_dim * in_dim);
+            crate::matmul::gemm_f32(
+                out_dim, in_dim, batch_size, inv_batch, d_cur, 1, out_dim, x, in_dim, 1, 0.0, dw,
+                in_dim, 1,
+            );
+
+            if idx == 0 {
+                break;
+            }
+
+            // dX = dZ * W into the other buffer.
+            let d_x: &mut [f32] = &mut other_buf[..batch_size * in_dim];
+            crate::matmul::gemm_f32(
+                batch_size,
+                in_dim,
+                out_dim,
+                1.0,
+                d_cur,
+                out_dim,
+                1,
+                layer.weights(),
+                in_dim,
+                1,
+                0.0,
+                d_x,
+                in_dim,
+                1,
+            );
+
+            cur_in_buf0 = !cur_in_buf0;
+            cur_dim = in_dim;
+        }
     }
 
     /// Applies an SGD update to all layers.

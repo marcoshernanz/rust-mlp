@@ -171,13 +171,11 @@ impl Layer {
     }
 
     #[inline]
-    #[cfg(feature = "serde")]
     pub(crate) fn weights(&self) -> &[f32] {
         &self.weights
     }
 
     #[inline]
-    #[cfg(feature = "serde")]
     pub(crate) fn biases(&self) -> &[f32] {
         &self.biases
     }
