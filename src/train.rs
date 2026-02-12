@@ -226,12 +226,12 @@ impl Mlp {
                 "weight_decay must be finite and >= 0".to_owned(),
             ));
         }
-        if let Some(v) = cfg.grad_clip_norm
-            && !(v.is_finite() && v > 0.0)
-        {
-            return Err(Error::InvalidConfig(
-                "grad_clip_norm must be finite and > 0".to_owned(),
-            ));
+        if let Some(v) = cfg.grad_clip_norm {
+            if !(v.is_finite() && v > 0.0) {
+                return Err(Error::InvalidConfig(
+                    "grad_clip_norm must be finite and > 0".to_owned(),
+                ));
+            }
         }
 
         let mut opt_state: OptimizerState = cfg.optimizer.state(self)?;
