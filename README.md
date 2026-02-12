@@ -1,75 +1,43 @@
 # rust-mlp
 
-A small, from-scratch multi-layer perceptron (MLP) library in Rust.
+[![CI](https://github.com/marcoshernanz/rust-mlp/actions/workflows/ci.yml/badge.svg)](https://github.com/marcoshernanz/rust-mlp/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/rust-mlp.svg)](https://crates.io/crates/rust-mlp)
+[![docs.rs](https://img.shields.io/docsrs/rust-mlp)](https://docs.rs/rust-mlp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-The crate is intentionally "small-core": it focuses on dense feed-forward networks, a simple training loop, and a predictable performance model.
+A small, from-scratch multi-layer perceptron (MLP) library for Rust.
 
-## Goals
+This crate is intentionally "small-core": dense layers, common activations/losses, a predictable training loop, and a performance model you can reason about.
 
-- Clear API and data layout.
-- Allocation-free hot path for per-sample forward/backward.
-- Deterministic initialization (seeded RNG) and strong tests (including numerical gradient checks).
+Highlights:
 
-## Non-goals (for now)
+- Allocation-free hot path: reuse `Scratch` / `Gradients`.
+- Batched compute: `forward_batch` / `backward_batch` with an optional faster GEMM backend.
+- Determinism: seeded init + deterministic shuffling.
+- Practical API: `fit`, `evaluate`, `predict`, `predict_into`.
+- Optional JSON model I/O (feature: `serde`).
 
-- GPU support.
-- Autodiff graph engine.
-- Large model zoo / high-level framework features.
+## Install
 
-## Quick start
-
-Run the example training loop:
-
-```bash
-cargo run --example tanh_sum
+```toml
+[dependencies]
+rust-mlp = "0.1"
 ```
 
-Run tests (includes gradient checks):
+Optional features:
 
-```bash
-cargo test
+```toml
+[dependencies]
+rust-mlp = { version = "0.1", features = ["matrixmultiply", "serde"] }
 ```
 
-## Library tour
-
-The main public types are:
-
-- `Mlp`: the model (stack of dense layers).
-- `Scratch`: reusable activation buffers for `Mlp::forward`.
-- `Gradients`: reusable gradient buffers for `Mlp::backward`.
-- `Trainer`: convenience wrapper holding `Scratch + Gradients`.
-- `Dataset` / `Inputs`: validated contiguous row-major data holders.
-- `FitConfig` / `FitReport`: high-level training configuration and output.
-
-## API overview
-
-Two layers of API exist:
-
-1) Low-level, allocation-free, "hot path":
-
-- `Mlp::forward(input, &mut scratch) -> &[f32]`
-- `Mlp::backward(input, &scratch, &mut grads) -> &[f32]`
-- `Mlp::sgd_step(&grads, lr)`
-
-These methods treat shape mismatches as programmer error and will panic via `assert!`.
-
-2) High-level convenience:
-
-- `Mlp::fit(&Dataset, Option<&Dataset>, FitConfig) -> Result<FitReport>`
-- `Mlp::evaluate(&Dataset, Loss, &[Metric]) -> Result<EvalReport>`
-- `Mlp::predict(&Dataset) -> Result<Vec<f32>>`
-- `Mlp::predict_inputs(&Inputs) -> Result<Vec<f32>>`
-- `Mlp::evaluate_mse(&Dataset) -> Result<f32>`
-
-These validate inputs and return `Result`.
-
-## Example: train + evaluate
+## Quick start (train + evaluate)
 
 ```rust
-use rust_mlp::{Activation, Dataset, FitConfig, Loss, Metric, MlpBuilder};
+use rust_mlp::{Activation, Dataset, FitConfig, Loss, Metric, MlpBuilder, Optimizer, Shuffle};
 
 fn main() -> rust_mlp::Result<()> {
-    // XOR-ish tiny dataset (for demonstration).
+    // XOR toy dataset.
     let xs = vec![
         vec![0.0, 0.0],
         vec![0.0, 1.0],
@@ -79,11 +47,10 @@ fn main() -> rust_mlp::Result<()> {
     let ys = vec![vec![0.0], vec![1.0], vec![1.0], vec![0.0]];
     let train = Dataset::from_rows(&xs, &ys)?;
 
-    // 2 -> 8 (tanh) -> 1 (identity) MLP with deterministic initialization.
     let mut mlp = MlpBuilder::new(2)?
-        .add_layer(8, Activation::Tanh)?
-        .add_layer(1, Activation::Identity)?
-        .build_with_seed(123)?;
+        .add_layer(8, Activation::ReLU)?
+        .add_layer(1, Activation::Sigmoid)?
+        .build_with_seed(0)?;
 
     let report = mlp.fit(
         &train,
@@ -92,84 +59,108 @@ fn main() -> rust_mlp::Result<()> {
             epochs: 200,
             lr: 0.1,
             batch_size: 4,
-            shuffle: rust_mlp::Shuffle::Seeded(0),
-            lr_schedule: rust_mlp::LrSchedule::Constant,
-            optimizer: rust_mlp::Optimizer::Adam {
+            shuffle: Shuffle::Seeded(0),
+            optimizer: Optimizer::Adam {
                 beta1: 0.9,
                 beta2: 0.999,
                 eps: 1e-8,
             },
-            weight_decay: 0.0,
-            grad_clip_norm: None,
             loss: Loss::Mse,
-            metrics: vec![Metric::Mse],
+            metrics: vec![Metric::Accuracy],
+            ..FitConfig::default()
         },
     )?;
 
-    let mse = mlp.evaluate_mse(&train)?;
     let last = report.epochs.last().unwrap();
-    println!("final train loss (from fit): {}", last.train.loss);
-    println!("train MSE: {mse}");
+    println!("final train loss={}", last.train.loss);
+
+    let eval = mlp.evaluate(&train, Loss::Mse, &[Metric::Accuracy])?;
+    println!("evaluate: loss={} metrics={:?}", eval.loss, eval.metrics);
     Ok(())
 }
 ```
 
-## Example: allocation-free inference
+## Allocation-free inference
 
-If you want to avoid allocating the output buffer on each call, reuse `Scratch` and copy the returned slice.
+`Mlp::forward` is allocation-free if you reuse `Scratch`. For shape-checked inference (returns `Result`), use `predict_into`.
 
 ```rust
 use rust_mlp::{Activation, MlpBuilder};
 
 fn main() -> rust_mlp::Result<()> {
     let mlp = MlpBuilder::new(3)?
-        .add_layer(5, Activation::Tanh)?
+        .add_layer(8, Activation::Tanh)?
         .add_layer(2, Activation::Identity)?
         .build_with_seed(0)?;
+
     let mut scratch = mlp.scratch();
+    let mut out = vec![0.0_f32; mlp.output_dim()];
 
     let x = [0.1_f32, -0.2, 0.3];
-    let y = mlp.forward(&x, &mut scratch);
-    let y_owned = y.to_vec();
-    println!("y = {y_owned:?}");
+    mlp.predict_into(&x, &mut scratch, &mut out)?;
+    println!("y={out:?}");
     Ok(())
 }
 ```
 
-## Performance model
+## Feature flags
 
-- The per-sample `forward`/`backward` path does not allocate if you reuse `Scratch`/`Gradients`.
-- `Dataset`/`Inputs` store data contiguously (row-major) to keep slice access cheap.
-- Training (`fit`) allocates buffers once and reuses them across all steps.
+- `matrixmultiply`: use the `matrixmultiply` crate as a faster GEMM backend for batched compute.
+- `serde`: enable JSON model serialization via `serde` + `serde_json`.
 
-### Batched training
+## Data layout and shapes
 
-When `FitConfig.batch_size > 1`, `fit` uses a batched GEMM-based path for full-size batches.
+- All scalars are `f32`.
+- `Dataset` / `Inputs` store samples contiguously in row-major layout.
+  - inputs shape: `(len, input_dim)` stored as `len * input_dim` flat
+  - targets shape: `(len, target_dim)` stored as `len * target_dim` flat
 
-Optional faster matmul backend:
+## Performance
+
+- `fit` allocates its buffers once and reuses them across steps.
+- When `batch_size > 1`, `fit` uses a batched GEMM-based path for full-size batches.
+- Benchmarks:
 
 ```bash
-cargo test --all-features
+cargo bench
 cargo bench --features matrixmultiply
 ```
 
-## Determinism
+### PyTorch comparison (optional)
 
-- Use `MlpBuilder::build_with_seed` for deterministic initialization.
+Comparing against PyTorch can be a fun and useful reality-check, as long as you keep it honest:
 
-## Panics vs. `Result`
+- Compare the same operation (e.g. batched forward only), same shapes, same dtype.
+- Disable autograd on the PyTorch side (`torch.inference_mode()`), and control threads.
+- Expect PyTorch to win on large matmuls (highly optimized BLAS); on small fixed-shape workloads, overhead can dominate.
 
-- Constructors and high-level helpers validate and return `Result`.
-- Low-level per-sample methods (`forward`, `backward`, `sgd_step`, and loss helpers) panic on shape mismatches.
-
-## Roadmap
-
-See `ROADMAP.md` for the production-readiness plan.
-
-## Serialization (feature: `serde`)
-
-Enable the feature and use `save_json` / `load_json`:
+This repo includes a small harness to compare batched forward throughput:
 
 ```bash
+# Rust (batched forward)
+cargo run --release --example perf_forward_batch --features matrixmultiply -- \
+  --batch-size 128 --iters 2000 --in-dim 128 --hidden 256 --layers 2 --out-dim 10
+
+# PyTorch (batched forward)
+python3 scripts/pytorch_forward_bench.py \
+  --batch-size 128 --iters 2000 --in-dim 128 --hidden 256 --layers 2 --out-dim 10 --threads 1
+```
+
+See `scripts/README.md` for details.
+
+## Examples
+
+```bash
+cargo run --example tanh_sum
+cargo run --example xor_relu
+cargo run --example softmax_3class
 cargo run --example save_load_json --features serde
 ```
+
+## MSRV
+
+MSRV is specified in `Cargo.toml`.
+
+## License
+
+MIT. See `LICENSE`.

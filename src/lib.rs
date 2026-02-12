@@ -1,12 +1,37 @@
 //! A small MLP (multi-layer perceptron) crate.
 //!
-//! This crate is built to be easy to understand while keeping the hot path allocation-free.
+//! `rust-mlp` is a small-core, from-scratch implementation of a dense feed-forward network.
+//! It is designed to be easy to read while keeping the per-sample hot path allocation-free.
 //!
-//! Conventions:
+//! # Design goals
+//!
+//! - Predictable performance: reuse buffers (`Scratch` / `Gradients`) instead of allocating.
+//! - Clear contracts: shapes are explicit and validated at the API boundary.
+//! - Practical training loop: `fit` supports mini-batches, shuffling, LR schedules, and common
+//!   optimizers.
+//!
+//! # Panics vs `Result`
+//!
+//! This crate intentionally exposes two layers of API:
+//!
+//! - Low-level hot path (panics on misuse):
+//!   - [`mlp::Mlp::forward`], [`mlp::Mlp::backward`]
+//!   - [`mlp::Mlp::forward_batch`], [`mlp::Mlp::backward_batch`]
+//!     Shape mismatches are treated as programmer error and will panic via `assert!`.
+//!
+//! - High-level convenience APIs (shape-checked):
+//!   - [`crate::Mlp::fit`], [`crate::Mlp::evaluate`]
+//!   - [`mlp::Mlp::predict_into`]
+//!     These validate inputs and return [`Result`].
+//!
+//! # Data layout and shapes
+//!
 //! - Scalars are `f32`.
-//! - Inputs/outputs are passed as slices (`&[f32]`, `&mut [f32]`) to avoid allocations.
-//! - Low-level APIs (`forward`, `backward`) panic on shape mismatches.
-//! - High-level APIs (`fit`, `predict`, `evaluate_*`) validate shapes and return `Result`.
+//! - [`Dataset`] and [`Inputs`] store samples contiguously in row-major layout.
+//! - Layer weights are row-major with shape `(out_dim, in_dim)`.
+//! - Batched inputs/outputs are passed as flat row-major buffers:
+//!   - inputs: `(batch_size, input_dim)` as `batch_size * input_dim` scalars
+//!   - outputs: `(batch_size, output_dim)` as `batch_size * output_dim` scalars
 //!
 //! # MSRV
 //!
@@ -54,6 +79,32 @@
 //!         metrics: vec![Metric::Accuracy],
 //!     },
 //! )?;
+//! Ok(())
+//! # }
+//! ```
+
+//! # Allocation-free training (advanced)
+//!
+//! If you want to drive training yourself (e.g. custom loop), allocate buffers once and reuse
+//! them across steps:
+//!
+//! ```rust
+//! use rust_mlp::{Activation, Loss, MlpBuilder};
+//!
+//! # fn main() -> rust_mlp::Result<()> {
+//! let mut mlp = MlpBuilder::new(3)?
+//!     .add_layer(8, Activation::Tanh)?
+//!     .add_layer(2, Activation::Identity)?
+//!     .build_with_seed(0)?;
+//!
+//! let mut trainer = mlp.trainer();
+//! let x = [0.1_f32, -0.2, 0.3];
+//! let t = [0.0_f32, 1.0];
+//!
+//! let y = mlp.forward(&x, &mut trainer.scratch);
+//! let _loss = Loss::Mse.backward(y, &t, trainer.grads.d_output_mut());
+//! mlp.backward(&x, &trainer.scratch, &mut trainer.grads);
+//! mlp.sgd_step(&trainer.grads, 1e-2);
 //! Ok(())
 //! # }
 //! ```

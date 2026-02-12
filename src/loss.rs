@@ -196,7 +196,7 @@ pub fn mae_backward(pred: &[f32], target: &[f32], d_pred: &mut [f32]) -> f32 {
 
 /// Binary cross-entropy loss with logits.
 ///
-/// Per element (with `t` in [0,1]):
+/// Per element (with `t` in \[0, 1\]):
 ///
 /// - `L = max(x, 0) - x * t + ln(1 + exp(-|x|))`
 ///

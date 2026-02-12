@@ -3,6 +3,13 @@ name = "rust-mlp"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/marcoshernanz/rust-mlp"
+documentation = "https://docs.rs/rust-mlp"
+description = "Small, from-scratch MLP (dense feed-forward) for Rust: predictable, allocation-free hot path, batched training, and optional fast GEMM backend."
+keywords = ["ml", "neural-network", "mlp", "deep-learning", "inference"]
+categories = ["science", "mathematics"]
 
 [dependencies]
 rand = "0.8"
@@ -16,6 +23,9 @@ default = []
 serde = ["dep:serde", "dep:serde_json"]
 # Use the `matrixmultiply` crate for faster batched GEMM.
 matrixmultiply = ["dep:matrixmultiply"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [dev-dependencies]
 criterion = "0.5"
