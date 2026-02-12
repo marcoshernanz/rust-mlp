@@ -94,9 +94,9 @@ Goal: a clean, explicit model definition that supports common networks.
   - Provide deterministic init via `MlpBuilder::build_with_seed`.
 
 - Shape-safe inference API
-  - Add a non-allocating prediction API:
-    - `predict_one_into(&self, input: &[f32], scratch: &mut Scratch, out: &mut [f32]) -> Result<()>`.
-  - Keep an ergonomic allocating wrapper for convenience.
+   - Add a non-allocating prediction API:
+     - `predict_into(&self, input: &[f32], scratch: &mut Scratch, out: &mut [f32]) -> Result<()>`.
+   - Keep an ergonomic allocating wrapper for convenience.
 
 - Documentation polish
   - Add rustdoc examples for common flows (`fit`, `predict`, low-level `forward`/`backward`).

@@ -165,7 +165,7 @@ impl Mlp {
             let x = data.input(idx);
             let t = data.target(idx);
 
-            self.predict_one_into(x, &mut scratch, &mut out_buf)?;
+            self.predict_into(x, &mut scratch, &mut out_buf)?;
             total_loss += loss_fn.forward(&out_buf, t);
             metric_acc.update(&out_buf, t)?;
         }

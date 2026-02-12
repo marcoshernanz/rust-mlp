@@ -779,11 +779,11 @@ impl Mlp {
         }
     }
 
-    /// Shape-safe, non-allocating inference for a single input.
+    /// Shape-safe, non-allocating inference.
     ///
     /// This validates shapes and returns `Result` instead of panicking.
     /// Internally it uses the low-level `forward` hot path.
-    pub fn predict_one_into(
+    pub fn predict_into(
         &self,
         input: &[f32],
         scratch: &mut Scratch,
@@ -823,6 +823,19 @@ impl Mlp {
         let y = self.forward(input, scratch);
         out.copy_from_slice(y);
         Ok(())
+    }
+
+    /// Shape-safe, non-allocating inference for a single input.
+    ///
+    /// Alias of [`Mlp::predict_into`].
+    #[inline]
+    pub fn predict_one_into(
+        &self,
+        input: &[f32],
+        scratch: &mut Scratch,
+        out: &mut [f32],
+    ) -> Result<()> {
+        self.predict_into(input, scratch, out)
     }
 }
 
@@ -1074,7 +1087,7 @@ mod tests {
     }
 
     #[test]
-    fn predict_one_into_validates_shapes() {
+    fn predict_into_validates_shapes() {
         let mlp = MlpBuilder::new(2)
             .unwrap()
             .add_layer(3, Activation::Tanh)
@@ -1087,10 +1100,10 @@ mod tests {
         let mut scratch = mlp.scratch();
         let mut out = [0.0_f32; 1];
 
-        let ok = mlp.predict_one_into(&[0.1, 0.2], &mut scratch, &mut out);
+        let ok = mlp.predict_into(&[0.1, 0.2], &mut scratch, &mut out);
         assert!(ok.is_ok());
 
-        let err = mlp.predict_one_into(&[0.1_f32], &mut scratch, &mut out);
+        let err = mlp.predict_into(&[0.1_f32], &mut scratch, &mut out);
         assert!(err.is_err());
     }
 

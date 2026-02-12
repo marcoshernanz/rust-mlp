@@ -49,7 +49,7 @@ fn main() -> rust_mlp::Result<()> {
     let mut scratch = mlp.scratch();
     let mut out = [0.0_f32; 1];
     for x in xs {
-        mlp.predict_one_into(&x, &mut scratch, &mut out)?;
+        mlp.predict_into(&x, &mut scratch, &mut out)?;
         println!("x={x:?} y={:?}", out[0]);
     }
 

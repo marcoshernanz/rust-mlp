@@ -8,6 +8,10 @@
 //! - Low-level APIs (`forward`, `backward`) panic on shape mismatches.
 //! - High-level APIs (`fit`, `predict`, `evaluate_*`) validate shapes and return `Result`.
 //!
+//! # MSRV
+//!
+//! This crate's minimum supported Rust version (MSRV) is specified in `Cargo.toml`.
+//!
 //! See `ROADMAP.md` for the production-readiness plan.
 
 //! # Quick start
@@ -81,3 +85,15 @@ pub use mlp::{BatchBackpropScratch, BatchScratch, Gradients, Mlp, Scratch};
 pub use optim::{Optimizer, OptimizerState, Sgd};
 pub use train::Shuffle;
 pub use train::{EpochReport, EvalReport, FitConfig, FitReport, LrSchedule};
+
+/// Shape-safe, non-allocating inference.
+///
+/// Thin wrapper around [`Mlp::predict_into`].
+pub fn predict_into(
+    mlp: &Mlp,
+    input: &[f32],
+    scratch: &mut Scratch,
+    out: &mut [f32],
+) -> Result<()> {
+    mlp.predict_into(input, scratch, out)
+}
