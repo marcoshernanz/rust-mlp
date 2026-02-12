@@ -80,7 +80,7 @@ fn main() -> rust_mlp::Result<()> {
     let mut checksum = 0.0_f32;
     for _ in 0..iters {
         let out = mlp.forward_batch(std::hint::black_box(&inputs), &mut scratch);
-        checksum += out[0];
+        checksum = out[0];
     }
     let elapsed = start.elapsed();
     std::hint::black_box(checksum);

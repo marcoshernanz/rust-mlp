@@ -119,6 +119,7 @@ fn main() -> rust_mlp::Result<()> {
 
 - `fit` allocates its buffers once and reuses them across steps.
 - When `batch_size > 1`, `fit` uses a batched GEMM-based path for full-size batches.
+- For meaningful batched performance, enable the `matrixmultiply` feature (otherwise a simple scalar GEMM is used).
 - Benchmarks:
 
 ```bash
@@ -130,7 +131,7 @@ cargo bench --features matrixmultiply
 
 Comparing against PyTorch can be a fun and useful reality-check, as long as you keep it honest:
 
-- Compare the same operation (e.g. batched forward only), same shapes, same dtype.
+- Compare the same operation (batched forward only), same shapes, same dtype.
 - Disable autograd on the PyTorch side (`torch.inference_mode()`), and control threads.
 - Expect PyTorch to win on large matmuls (highly optimized BLAS); on small fixed-shape workloads, overhead can dominate.
 
@@ -139,12 +140,42 @@ This repo includes a small harness to compare batched forward throughput:
 ```bash
 # Rust (batched forward)
 cargo run --release --example perf_forward_batch --features matrixmultiply -- \
-  --batch-size 128 --iters 2000 --in-dim 128 --hidden 256 --layers 2 --out-dim 10
+  --batch-size 128 --iters 2000 --warmup 200 --in-dim 128 --hidden 256 --layers 2 --out-dim 10
 
 # PyTorch (batched forward)
 python3 scripts/pytorch_forward_bench.py \
-  --batch-size 128 --iters 2000 --in-dim 128 --hidden 256 --layers 2 --out-dim 10 --threads 1
+  --batch-size 128 --iters 2000 --warmup 200 --in-dim 128 --hidden 256 --layers 2 --out-dim 10 --threads 1
 ```
+
+PyTorch is not a dependency of this crate; install it separately. If your Python is externally managed
+(common on macOS/Homebrew), use a virtualenv:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install torch
+```
+
+Example results (CPU, forward-only, float32) from one machine:
+
+- Hardware: Apple M4 (arm64)
+- Rust: `rustc 1.92.0`
+- PyTorch: `torch 2.10.0`
+- Notes: `rust-mlp` built with `--release --features matrixmultiply`; PyTorch run with `--threads 1`.
+
+| Workload (batch,in,hidden,layers,out) | rust-mlp samples/s | PyTorch samples/s | Winner |
+|---|---:|---:|---|
+| (32, 32, 64, 2, 10) | ~0.93M | ~0.67M | rust-mlp (~1.4x) |
+| (128, 128, 256, 2, 10) | ~0.15M | ~0.33M | PyTorch (~2.2x) |
+| (1024, 256, 512, 2, 10) | ~0.049M | ~0.167M | PyTorch (~3.4x) |
+
+Interpretation:
+
+- This crate is competitive when the network is small enough that framework overhead matters.
+- PyTorch pulls ahead as matmuls get large (highly tuned kernels, better cache blocking, and optional multithreading).
+- PyTorch can use multiple CPU threads; `rust-mlp` is currently single-threaded.
+- These are not training benchmarks; only forward throughput is measured.
+- Your results will vary; rerun the harness on your machine.
 
 See `scripts/README.md` for details.
 

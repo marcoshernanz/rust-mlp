@@ -4,9 +4,16 @@ import argparse
 import importlib
 import os
 import time
+import warnings
 
 
 def main() -> None:
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Failed to initialize NumPy:.*",
+        category=UserWarning,
+    )
+
     parser = argparse.ArgumentParser(
         description="PyTorch batched forward benchmark (MLP: Linear + Tanh + ... + Linear)."
     )
@@ -38,6 +45,11 @@ def main() -> None:
         )
 
     torch.set_num_threads(args.threads)
+    try:
+        torch.set_num_interop_threads(args.threads)
+    except Exception:
+        # Not all builds allow setting interop threads at runtime.
+        pass
     torch.manual_seed(args.seed)
 
     batch_size = args.batch_size
@@ -71,16 +83,18 @@ def main() -> None:
 
     # Warmup.
     with torch.inference_mode():
+        y = None
         for _ in range(warmup):
             y = model(x)
-            _ = y[0, 0].item()
+        assert y is not None
 
         t0 = time.perf_counter()
-        checksum = 0.0
+        y = None
         for _ in range(iters):
             y = model(x)
-            checksum += float(y[0, 0])
         t1 = time.perf_counter()
+        assert y is not None
+        checksum = float(y[0, 0])
 
     elapsed_s = t1 - t0
     total_samples = iters * batch_size
